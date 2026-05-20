@@ -269,6 +269,17 @@ struct MetricRecordMetadata<'a> {
     is_monotonic: Option<bool>,
 }
 
+struct MetricRecordBaseArgs<'a, 'm> {
+    tenant_id: &'a str,
+    resource_attributes: &'a [(String, String)],
+    scope_name: &'a str,
+    metadata: MetricRecordMetadata<'m>,
+    data_point_attributes: &'a [KeyValue],
+    start_time_unix_nano: u64,
+    time_unix_nano: u64,
+    flags: u32,
+}
+
 fn number_data_point_to_record(
     tenant_id: &str,
     resource_attributes: &[(String, String)],
@@ -288,16 +299,16 @@ fn number_data_point_to_record(
     let (value_type, value) = number_value_to_string(value?)?;
 
     let record = append_exemplar_attributes(
-        metric_record_base(
+        metric_record_base(MetricRecordBaseArgs {
             tenant_id,
             resource_attributes,
             scope_name,
             metadata,
-            &attributes,
+            data_point_attributes: &attributes,
             start_time_unix_nano,
             time_unix_nano,
             flags,
-        )
+        })
         .with_attribute("otel.metric.value", value)
         .with_attribute("otel.metric.value_type", value_type),
         &exemplars,
@@ -328,16 +339,16 @@ fn histogram_data_point_to_record(
         ..
     } = data_point;
 
-    let mut record = metric_record_base(
+    let mut record = metric_record_base(MetricRecordBaseArgs {
         tenant_id,
         resource_attributes,
         scope_name,
         metadata,
-        &attributes,
+        data_point_attributes: &attributes,
         start_time_unix_nano,
         time_unix_nano,
         flags,
-    )
+    })
     .with_attribute("otel.metric.count", count.to_string())
     .with_attribute("otel.metric.bucket_counts", join_u64_values(&bucket_counts))
     .with_attribute(
@@ -383,16 +394,16 @@ fn exponential_histogram_data_point_to_record(
         ..
     } = data_point;
 
-    let mut record = metric_record_base(
+    let mut record = metric_record_base(MetricRecordBaseArgs {
         tenant_id,
         resource_attributes,
         scope_name,
         metadata,
-        &attributes,
+        data_point_attributes: &attributes,
         start_time_unix_nano,
         time_unix_nano,
         flags,
-    )
+    })
     .with_attribute("otel.metric.count", count.to_string())
     .with_attribute("otel.metric.scale", scale.to_string())
     .with_attribute("otel.metric.zero_count", zero_count.to_string())
@@ -444,16 +455,16 @@ fn summary_data_point_to_record(
         flags,
     } = data_point;
 
-    metric_record_base(
+    metric_record_base(MetricRecordBaseArgs {
         tenant_id,
         resource_attributes,
         scope_name,
         metadata,
-        &attributes,
+        data_point_attributes: &attributes,
         start_time_unix_nano,
         time_unix_nano,
         flags,
-    )
+    })
     .with_attribute("otel.metric.count", count.to_string())
     .with_attribute("otel.metric.sum", sum.to_string())
     .with_attribute(
@@ -462,16 +473,18 @@ fn summary_data_point_to_record(
     )
 }
 
-fn metric_record_base(
-    tenant_id: &str,
-    resource_attributes: &[(String, String)],
-    scope_name: &str,
-    metadata: MetricRecordMetadata<'_>,
-    data_point_attributes: &[KeyValue],
-    start_time_unix_nano: u64,
-    time_unix_nano: u64,
-    flags: u32,
-) -> TelemetryRecord {
+fn metric_record_base(args: MetricRecordBaseArgs<'_, '_>) -> TelemetryRecord {
+    let MetricRecordBaseArgs {
+        tenant_id,
+        resource_attributes,
+        scope_name,
+        metadata,
+        data_point_attributes,
+        start_time_unix_nano,
+        time_unix_nano,
+        flags,
+    } = args;
+
     let mut record = TelemetryRecord::new(
         tenant_id,
         SignalKind::Metric,

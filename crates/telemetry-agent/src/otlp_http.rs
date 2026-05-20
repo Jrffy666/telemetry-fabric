@@ -22,7 +22,7 @@ use telemetry_otlp::{
     logs_request_to_records, metrics_request_to_records, trace_request_to_records,
 };
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
-use tokio::net::{TcpListener, TcpStream};
+use tokio::net::TcpListener;
 use tokio::sync::Mutex;
 use tokio_rustls::TlsAcceptor;
 
@@ -414,6 +414,7 @@ mod tests {
     use telemetry_core::{
         ExporterConfig, ExporterProtocol, PipelineConfig, RouteConfig, SignalKind, TlsConfig,
     };
+    use tokio::net::TcpStream;
 
     #[test]
     fn parses_buffered_otlp_http_request() -> Result<(), Box<dyn Error + Send + Sync>> {

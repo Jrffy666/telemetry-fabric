@@ -139,6 +139,7 @@ impl AgentRuntime {
         &self.config
     }
 
+    #[cfg(test)]
     pub fn metrics(&self) -> RuntimeMetrics {
         self.metrics
     }

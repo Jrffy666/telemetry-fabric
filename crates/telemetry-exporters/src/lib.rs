@@ -1196,12 +1196,12 @@ fn exponential_histogram_prometheus_buckets(record: &TelemetryRecord) -> Vec<(St
         }
     }
 
-    if let Some(zero_count) = parse_u64_attribute(record, "otel.metric.zero_count") {
-        if zero_count > 0 {
-            let zero_threshold =
-                parse_f64_attribute(record, "otel.metric.zero_threshold").unwrap_or_default();
-            buckets.push((zero_threshold, zero_count));
-        }
+    if let Some(zero_count) = parse_u64_attribute(record, "otel.metric.zero_count")
+        && zero_count > 0
+    {
+        let zero_threshold =
+            parse_f64_attribute(record, "otel.metric.zero_threshold").unwrap_or_default();
+        buckets.push((zero_threshold, zero_count));
     }
 
     let positive_offset =
