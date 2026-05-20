@@ -1,0 +1,19 @@
+[Unit]
+Description=Telemetry Fabric Agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=telemetry-fabric
+Group=telemetry-fabric
+ExecStart=/usr/local/bin/telemetry-agent --otlp-grpc 0.0.0.0:4317 --health-listen 127.0.0.1:13133 --queue-dir /var/lib/telemetry-fabric/queue
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/telemetry-fabric
+
+[Install]
+WantedBy=multi-user.target

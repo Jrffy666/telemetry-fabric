@@ -1,0 +1,75 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: {{ include "telemetry-fabric.name" . }}
+  labels:
+    {{- include "telemetry-fabric.labels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "telemetry-fabric.name" . }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        {{- include "telemetry-fabric.labels" . | nindent 8 }}
+    spec:
+      containers:
+        - name: agent
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args:
+            - "--tenant"
+            - {{ .Values.agent.tenant | quote }}
+            - "--otlp-grpc"
+            - {{ .Values.agent.otlpGrpcAddress | quote }}
+            - "--health-listen"
+            - {{ .Values.agent.healthAddress | quote }}
+            {{- if .Values.agent.otlpExportEndpoint }}
+            - "--otlp-export-endpoint"
+            - {{ .Values.agent.otlpExportEndpoint | quote }}
+            {{- end }}
+            {{- if .Values.agent.controlEndpoint }}
+            - "--control-endpoint"
+            - {{ .Values.agent.controlEndpoint | quote }}
+            - "--control-heartbeat-interval-ms"
+            - {{ .Values.agent.controlHeartbeatIntervalMs | quote }}
+            {{- if .Values.agent.agentIdFromPodName }}
+            - "--agent-id"
+            - "$(POD_NAME)"
+            {{- end }}
+            {{- end }}
+            - "--queue-dir"
+            - {{ .Values.agent.queueDir | quote }}
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+          ports:
+            - name: otlp-grpc
+              containerPort: {{ .Values.service.port }}
+            - name: health
+              containerPort: {{ .Values.service.healthPort }}
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: health
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: health
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            - name: queue
+              mountPath: /var/lib/telemetry-fabric
+      volumes:
+        - name: queue
+          hostPath:
+            path: /var/lib/telemetry-fabric
+            type: DirectoryOrCreate

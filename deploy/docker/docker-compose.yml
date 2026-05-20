@@ -1,0 +1,14 @@
+services:
+  telemetry-agent:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/telemetry-agent.Dockerfile
+    command: ["--otlp-grpc", "0.0.0.0:4317", "--health-listen", "0.0.0.0:13133", "--queue-dir", "/var/lib/telemetry-fabric/queue"]
+    ports:
+      - "4317:4317"
+      - "13133:13133"
+    volumes:
+      - telemetry_agent_queue:/var/lib/telemetry-fabric
+
+volumes:
+  telemetry_agent_queue:

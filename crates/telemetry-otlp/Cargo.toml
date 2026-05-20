@@ -1,0 +1,17 @@
+[package]
+name = "telemetry-otlp"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[lib]
+name = "telemetry_otlp"
+path = "src/lib.rs"
+
+[dependencies]
+opentelemetry-proto = { version = "0.32.0", default-features = false, features = ["gen-tonic", "trace", "metrics", "logs", "with-serde"] }
+telemetry-core = { path = "../telemetry-core" }
+
+[lints]
+workspace = true

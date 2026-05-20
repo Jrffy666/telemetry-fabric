@@ -1,0 +1,49 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: telemetry-fabric-agent
+  namespace: observability
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: telemetry-fabric-agent
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: telemetry-fabric-agent
+    spec:
+      containers:
+        - name: agent
+          image: telemetry-fabric/agent:0.1.0
+          args:
+            - "--otlp-grpc"
+            - "0.0.0.0:4317"
+            - "--health-listen"
+            - "0.0.0.0:13133"
+            - "--queue-dir"
+            - "/var/lib/telemetry-fabric/queue"
+          ports:
+            - name: otlp-grpc
+              containerPort: 4317
+            - name: health
+              containerPort: 13133
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: health
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: health
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          volumeMounts:
+            - name: queue
+              mountPath: /var/lib/telemetry-fabric
+      volumes:
+        - name: queue
+          hostPath:
+            path: /var/lib/telemetry-fabric
+            type: DirectoryOrCreate

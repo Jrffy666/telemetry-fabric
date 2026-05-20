@@ -1,0 +1,71 @@
+tenant: payments-prod
+pipeline: default
+
+receivers:
+  otlp-grpc:
+    protocol: otlp_grpc
+    endpoint: 0.0.0.0:4317
+  otlp-http:
+    protocol: otlp_http
+    endpoint: 0.0.0.0:4318
+    tls:
+      enabled: false
+      cert_file: certs/server.pem
+      key_file: certs/server-key.pem
+      ca_file: certs/ca.pem
+      require_client_auth: false
+  tf-line:
+    protocol: tf_line
+    endpoint: 127.0.0.1:4319
+
+processors:
+  memory-limiter:
+    enabled: true
+    max_memory_mb: 512
+  batch:
+    enabled: true
+    max_items: 8192
+    timeout_ms: 1000
+  redact:
+    enabled: false
+    fields:
+      - http.request.header.authorization
+      - db.statement
+
+exporters:
+  stdout:
+    protocol: stdout
+    endpoint: stdout://local
+  otlp-upstream:
+    protocol: otlp_http
+    endpoint: https://otel-collector.observability.svc:4318
+    tls:
+      ca_file: certs/ca.pem
+      cert_file: certs/client.pem
+      key_file: certs/client-key.pem
+      server_name: otel-collector.observability.svc
+  otlp-upstream-json:
+    protocol: otlp_http_json
+    endpoint: https://otel-collector-json.observability.svc:4318
+    tls:
+      ca_file: certs/ca.pem
+      server_name: otel-collector-json.observability.svc
+  prometheus-remote-write:
+    protocol: prometheus_remote_write
+    endpoint: https://prometheus.observability.svc:9090/api/v1/write
+    tls:
+      ca_file: certs/ca.pem
+      server_name: prometheus.observability.svc
+
+routes:
+  traces:
+    exporters: [otlp-upstream]
+  metrics:
+    exporters: [otlp-upstream, prometheus-remote-write]
+  logs:
+    exporters: [otlp-upstream]
+
+limits:
+  max_ingest_bytes_per_second: 67108864
+  max_queue_bytes: 10737418240
+  max_record_bytes: 4194304

@@ -1,0 +1,16 @@
+[package]
+name = "telemetry-processors"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[lib]
+name = "telemetry_processors"
+path = "src/lib.rs"
+
+[dependencies]
+telemetry-core = { path = "../telemetry-core" }
+
+[lints]
+workspace = true

@@ -1,0 +1,27 @@
+image:
+  repository: telemetry-fabric/agent
+  tag: "0.1.0"
+  pullPolicy: IfNotPresent
+
+agent:
+  otlpGrpcAddress: "0.0.0.0:4317"
+  healthAddress: "0.0.0.0:13133"
+  otlpExportEndpoint: ""
+  controlEndpoint: ""
+  controlHeartbeatIntervalMs: 5000
+  agentIdFromPodName: true
+  queueDir: "/var/lib/telemetry-fabric/queue"
+  tenant: "default"
+
+service:
+  type: ClusterIP
+  port: 4317
+  healthPort: 13133
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi

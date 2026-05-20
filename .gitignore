@@ -1,0 +1,15 @@
+target/
+_build/
+deps/
+.elixir_ls/
+.telemetry-fabric/
+.tmp/
+mix_tmp/
+rel_tmp/
+*.ez
+*.beam
+*.plt
+*.dump
+*.log
+*.tmp
+.DS_Store
