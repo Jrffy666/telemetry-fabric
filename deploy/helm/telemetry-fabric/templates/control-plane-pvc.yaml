@@ -1,0 +1,17 @@
+{{- if and .Values.controlPlane.enabled .Values.controlPlane.persistence.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "telemetry-fabric.controlPlaneName" . }}-data
+  labels:
+    {{- include "telemetry-fabric.controlPlaneLabels" . | nindent 4 }}
+spec:
+  accessModes:
+    - ReadWriteOnce
+  {{- if .Values.controlPlane.persistence.storageClass }}
+  storageClassName: {{ .Values.controlPlane.persistence.storageClass | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.controlPlane.persistence.size | quote }}
+{{- end }}

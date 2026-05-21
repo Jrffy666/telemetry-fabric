@@ -38,6 +38,15 @@ spec:
             - "--agent-id"
             - "$(POD_NAME)"
             {{- end }}
+            {{- else if .Values.controlPlane.enabled }}
+            - "--control-endpoint"
+            - "http://{{ include "telemetry-fabric.controlPlaneName" . }}:{{ .Values.controlPlane.service.port }}"
+            - "--control-heartbeat-interval-ms"
+            - {{ .Values.agent.controlHeartbeatIntervalMs | quote }}
+            {{- if .Values.agent.agentIdFromPodName }}
+            - "--agent-id"
+            - "$(POD_NAME)"
+            {{- end }}
             {{- end }}
             - "--queue-dir"
             - {{ .Values.agent.queueDir | quote }}

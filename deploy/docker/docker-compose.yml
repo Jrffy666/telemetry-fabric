@@ -1,14 +1,73 @@
 services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: telemetry_fabric
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d telemetry_fabric"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  control-plane:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/control-plane.Dockerfile
+    environment:
+      TELEMETRY_FABRIC_CONTROL_HTTP_LISTEN: 0.0.0.0:4001
+      TELEMETRY_FABRIC_CONTROL_DATA_DIR: /var/lib/telemetry-fabric/control-plane
+      TELEMETRY_FABRIC_CONTROL_DATABASE_URL: postgres://postgres:postgres@postgres:5432/telemetry_fabric
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        /opt/telemetry-fabric-control/bin/telemetry_fabric_control eval "TelemetryFabricControl.Release.migrate()" &&
+        exec /opt/telemetry-fabric-control/bin/telemetry_fabric_control start
+    ports:
+      - "4001:4001"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:4001/healthz >/dev/null"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+    volumes:
+      - control_plane_data:/var/lib/telemetry-fabric/control-plane
+
   telemetry-agent:
     build:
       context: ../..
       dockerfile: deploy/docker/telemetry-agent.Dockerfile
-    command: ["--otlp-grpc", "0.0.0.0:4317", "--health-listen", "0.0.0.0:13133", "--queue-dir", "/var/lib/telemetry-fabric/queue"]
+    command:
+      [
+        "--tenant",
+        "default",
+        "--agent-id",
+        "docker-agent",
+        "--otlp-grpc",
+        "0.0.0.0:4317",
+        "--health-listen",
+        "0.0.0.0:13133",
+        "--control-endpoint",
+        "http://control-plane:4001",
+        "--queue-dir",
+        "/var/lib/telemetry-fabric/queue"
+      ]
     ports:
       - "4317:4317"
       - "13133:13133"
+    depends_on:
+      control-plane:
+        condition: service_healthy
     volumes:
       - telemetry_agent_queue:/var/lib/telemetry-fabric
 
 volumes:
+  postgres_data:
+  control_plane_data:
   telemetry_agent_queue:

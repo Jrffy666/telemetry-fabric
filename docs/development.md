@@ -264,3 +264,35 @@ sync loop, or tune `TELEMETRY_FABRIC_CONTROL_POSTGRES_SYNC_INTERVAL_MS`. The
 live PostgreSQL persistence test is wired into CI with a disposable PostgreSQL
 service. The remaining production work is the Phoenix API and gRPC config
 stream.
+
+## Docker And Kubernetes
+
+Run the local container stack:
+
+```bash
+docker compose -f deploy/docker/docker-compose.yml up --build
+```
+
+The stack starts PostgreSQL, runs the control-plane schema migration through
+the release helper, exposes the MVP control-plane HTTP API on
+`http://127.0.0.1:4001`, and starts an agent connected to that control plane.
+
+Build the individual images:
+
+```bash
+docker build -f deploy/docker/telemetry-agent.Dockerfile -t telemetry-fabric/agent:0.1.0 .
+docker build -f deploy/docker/control-plane.Dockerfile -t telemetry-fabric/control-plane:0.1.0 .
+```
+
+Apply raw Kubernetes manifests:
+
+```bash
+kubectl apply -f deploy/k8s/control-plane.yaml
+kubectl apply -f deploy/k8s/telemetry-agent-daemonset.yaml
+```
+
+Install the Helm chart with the MVP control plane enabled:
+
+```bash
+helm install telemetry-fabric deploy/helm/telemetry-fabric --set controlPlane.enabled=true
+```

@@ -1,0 +1,15 @@
+.git
+.github
+.telemetry-fabric
+.tmp
+mix_tmp
+mix_tmp2
+target
+apps/control_plane/_build
+apps/control_plane/deps
+apps/control_plane/.tmp
+apps/control_plane/mix_tmp
+apps/control_plane/rel_tmp
+**/*.log
+**/*.corrupt
+**/*.reason

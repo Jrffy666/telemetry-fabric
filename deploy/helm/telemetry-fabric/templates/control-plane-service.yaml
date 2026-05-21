@@ -1,0 +1,17 @@
+{{- if .Values.controlPlane.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "telemetry-fabric.controlPlaneName" . }}
+  labels:
+    {{- include "telemetry-fabric.controlPlaneLabels" . | nindent 4 }}
+spec:
+  type: {{ .Values.controlPlane.service.type }}
+  selector:
+    app.kubernetes.io/name: {{ include "telemetry-fabric.controlPlaneName" . }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+  ports:
+    - name: http
+      port: {{ .Values.controlPlane.service.port }}
+      targetPort: http
+{{- end }}

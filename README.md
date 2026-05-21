@@ -39,6 +39,9 @@ This repository currently contains:
   preserves rollback audit history.
 - Protobuf contracts for future agent-control and pipeline APIs.
 - Deployment and operations scaffolding.
+- Docker Compose, raw Kubernetes, Helm, and systemd deployment examples for the
+  agent, plus Docker Compose and Kubernetes/Helm deployment examples for the
+  MVP control-plane HTTP API.
 
 The Rust crates keep protocol integrations behind stable internal traits so the
 runtime can evolve without changing queue, processor, and routing semantics.
@@ -96,3 +99,13 @@ mix test
 ```
 
 Elixir/Mix must be installed locally before these commands can run.
+
+## Local Docker Stack
+
+```bash
+docker compose -f deploy/docker/docker-compose.yml up --build
+```
+
+The compose stack starts PostgreSQL, the MVP HTTP control plane on `:4001`, and
+an agent that heartbeats to the control plane while receiving OTLP/gRPC on
+`:4317`.

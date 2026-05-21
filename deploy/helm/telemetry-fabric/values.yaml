@@ -13,6 +13,35 @@ agent:
   queueDir: "/var/lib/telemetry-fabric/queue"
   tenant: "default"
 
+controlPlane:
+  enabled: false
+  image:
+    repository: telemetry-fabric/control-plane
+    tag: "0.1.0"
+    pullPolicy: IfNotPresent
+  replicas: 1
+  httpListen: "0.0.0.0:4001"
+  dataDir: "/var/lib/telemetry-fabric/control-plane"
+  postgresSync: "true"
+  postgresSyncIntervalMs: 5000
+  databaseUrlSecret:
+    name: ""
+    key: database-url
+  service:
+    type: ClusterIP
+    port: 4001
+  persistence:
+    enabled: true
+    size: 1Gi
+    storageClass: ""
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
 service:
   type: ClusterIP
   port: 4317

@@ -21,6 +21,7 @@ defmodule TelemetryFabricControl.MixProject do
   defp deps do
     [
       {:ecto_sql, "~> 3.12"},
+      {:jason, "~> 1.4"},
       {:postgrex, ">= 0.0.0"}
     ]
   end

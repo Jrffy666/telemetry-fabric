@@ -1,0 +1,84 @@
+{{- if .Values.controlPlane.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "telemetry-fabric.controlPlaneName" . }}
+  labels:
+    {{- include "telemetry-fabric.controlPlaneLabels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.controlPlane.replicas }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "telemetry-fabric.controlPlaneName" . }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        {{- include "telemetry-fabric.controlPlaneLabels" . | nindent 8 }}
+    spec:
+      {{- if .Values.controlPlane.databaseUrlSecret.name }}
+      initContainers:
+        - name: migrate
+          image: "{{ .Values.controlPlane.image.repository }}:{{ .Values.controlPlane.image.tag }}"
+          imagePullPolicy: {{ .Values.controlPlane.image.pullPolicy }}
+          command:
+            - /opt/telemetry-fabric-control/bin/telemetry_fabric_control
+          args:
+            - eval
+            - TelemetryFabricControl.Release.migrate()
+          env:
+            - name: TELEMETRY_FABRIC_CONTROL_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.controlPlane.databaseUrlSecret.name | quote }}
+                  key: {{ .Values.controlPlane.databaseUrlSecret.key | quote }}
+      {{- end }}
+      containers:
+        - name: control-plane
+          image: "{{ .Values.controlPlane.image.repository }}:{{ .Values.controlPlane.image.tag }}"
+          imagePullPolicy: {{ .Values.controlPlane.image.pullPolicy }}
+          env:
+            - name: TELEMETRY_FABRIC_CONTROL_HTTP_LISTEN
+              value: {{ .Values.controlPlane.httpListen | quote }}
+            - name: TELEMETRY_FABRIC_CONTROL_DATA_DIR
+              value: {{ .Values.controlPlane.dataDir | quote }}
+            - name: TELEMETRY_FABRIC_CONTROL_POSTGRES_SYNC
+              value: {{ .Values.controlPlane.postgresSync | quote }}
+            - name: TELEMETRY_FABRIC_CONTROL_POSTGRES_SYNC_INTERVAL_MS
+              value: {{ .Values.controlPlane.postgresSyncIntervalMs | quote }}
+            {{- if .Values.controlPlane.databaseUrlSecret.name }}
+            - name: TELEMETRY_FABRIC_CONTROL_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.controlPlane.databaseUrlSecret.name | quote }}
+                  key: {{ .Values.controlPlane.databaseUrlSecret.key | quote }}
+            {{- end }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.controlPlane.service.port }}
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.controlPlane.resources | nindent 12 }}
+          volumeMounts:
+            - name: data
+              mountPath: {{ .Values.controlPlane.dataDir | quote }}
+      volumes:
+        - name: data
+          {{- if .Values.controlPlane.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "telemetry-fabric.controlPlaneName" . }}-data
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+{{- end }}
