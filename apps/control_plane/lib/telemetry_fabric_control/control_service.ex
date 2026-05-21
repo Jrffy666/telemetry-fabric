@@ -106,6 +106,14 @@ defmodule TelemetryFabricControl.ControlService do
     end
   end
 
+  def put_pipeline(attrs) when is_map(attrs) do
+    with :ok <- require_text(:tenant_id, Map.get(attrs, :tenant_id)),
+         :ok <- require_text(:pipeline, pipeline_name(attrs)),
+         {:ok, config} <- pipeline_from_attrs(attrs) do
+      PipelineStore.put_pipeline(config, Map.get(attrs, :actor, "operator"))
+    end
+  end
+
   def rollback_pipeline(attrs) when is_map(attrs) do
     with :ok <- require_text(:tenant_id, Map.get(attrs, :tenant_id)),
          :ok <- require_text(:pipeline, pipeline_name(attrs)),
@@ -160,6 +168,22 @@ defmodule TelemetryFabricControl.ControlService do
   end
 
   defp pipeline_name(attrs), do: Map.get(attrs, :pipeline, "default")
+
+  defp pipeline_from_attrs(attrs) do
+    config = %PipelineConfig{
+      tenant_id: Map.fetch!(attrs, :tenant_id),
+      name: pipeline_name(attrs),
+      receivers: Map.get(attrs, :receivers, []),
+      processors: Map.get(attrs, :processors, []),
+      exporters: Map.get(attrs, :exporters, []),
+      routes: Map.get(attrs, :routes, [])
+    }
+
+    case PipelineConfig.validate(config) do
+      :ok -> {:ok, config}
+      error -> error
+    end
+  end
 
   defp require_same_tenant(agent, tenant_id) do
     if agent.tenant_id == tenant_id do

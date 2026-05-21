@@ -27,7 +27,8 @@ The current OTP control domain includes:
   and audit events.
 - A protocol-neutral `ControlService` that mirrors the AgentControl protobuf
   workflow: agent registration, heartbeat handling, config update generation,
-  status reporting, pipeline rollback, and queued operator commands.
+  status reporting, pipeline publication and rollback, and queued operator
+  commands.
 - Audit events for agent registration, pipeline updates, pipeline rollback,
   command enqueue, and command delivery.
 - YAML pipeline payload generation with a SHA-256 checksum so a future transport

@@ -57,6 +57,35 @@ defmodule TelemetryFabricControl.HttpControlServerTest do
     assert current_config_body["update"] == nil
   end
 
+  test "serves pipeline publication workflow", %{port: port} do
+    assert {200, publish_body} =
+             post_json(port, "/v1/pipelines", pipeline_payload("payments-prod"))
+
+    assert publish_body["pipeline"]["tenant_id"] == "payments-prod"
+    assert publish_body["pipeline"]["name"] == "default"
+    assert publish_body["pipeline"]["version"] == 1
+
+    assert {200, register_body} =
+             post_json(port, "/v1/agents/register", %{
+               agent_id: "agent-1",
+               tenant_id: "payments-prod",
+               hostname: "node-a",
+               version: "0.1.0"
+             })
+
+    assert register_body["agent"]["config_version"] == 1
+
+    assert {200, config_body} =
+             post_json(port, "/v1/agents/config", %{
+               agent_id: "agent-1",
+               tenant_id: "payments-prod",
+               current_version: 0
+             })
+
+    assert config_body["update"]["version"] == 1
+    assert config_body["update"]["pipeline_config"] =~ "tenant-rate-limit"
+  end
+
   test "serves pipeline rollback workflow", %{port: port} do
     first_config = SamplePipeline.build("payments-prod")
     second_config = %{first_config | processors: [%{name: "redact", enabled: true}]}
@@ -174,6 +203,17 @@ defmodule TelemetryFabricControl.HttpControlServerTest do
              })
 
     assert body["error"] == "invalid_integer"
+
+    assert {400, body} =
+             post_json(port, "/v1/pipelines", %{
+               tenant_id: "payments-prod",
+               pipeline: "default",
+               receivers: [],
+               exporters: [],
+               routes: []
+             })
+
+    assert body["error"] == "empty_receivers"
   end
 
   test "serves health checks", %{port: port} do
@@ -194,6 +234,27 @@ defmodule TelemetryFabricControl.HttpControlServerTest do
         payload
       ]
     )
+  end
+
+  defp pipeline_payload(tenant_id) do
+    %{
+      tenant_id: tenant_id,
+      pipeline: "default",
+      actor: "operator",
+      receivers: [
+        %{name: "tf-line", protocol: "tf_line", endpoint: "127.0.0.1:4319"}
+      ],
+      processors: [
+        %{name: "memory-limiter", enabled: true},
+        %{name: "tenant-rate-limit", enabled: true}
+      ],
+      exporters: [
+        %{name: "stdout", protocol: "stdout", endpoint: "stdout://local"}
+      ],
+      routes: [
+        %{signal: "trace", exporters: ["stdout"]}
+      ]
+    }
   end
 
   defp raw_request(port, request) do

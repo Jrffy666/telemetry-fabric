@@ -162,6 +162,7 @@ Available HTTP endpoints:
 - `POST /v1/agents/config`
 - `POST /v1/agents/status`
 - `POST /v1/agents/commands`
+- `POST /v1/pipelines`
 - `POST /v1/pipelines/rollback`
 
 Queue an operator command:
@@ -181,6 +182,29 @@ Operator commands are durable until an agent heartbeat receives them. Delivery
 marks the stored command as `delivered` with a `delivered_at` timestamp, and the
 PostgreSQL snapshot sync preserves both pending and delivered commands.
 Command enqueue and delivery both append audit events.
+
+Publish a pipeline version:
+
+```json
+{
+  "tenant_id": "payments-prod",
+  "pipeline": "default",
+  "actor": "operator",
+  "receivers": [
+    {"name": "tf-line", "protocol": "tf_line", "endpoint": "127.0.0.1:4319"}
+  ],
+  "processors": [
+    {"name": "memory-limiter", "enabled": true},
+    {"name": "tenant-rate-limit", "enabled": true}
+  ],
+  "exporters": [
+    {"name": "stdout", "protocol": "stdout", "endpoint": "stdout://local"}
+  ],
+  "routes": [
+    {"signal": "trace", "exporters": ["stdout"]}
+  ]
+}
+```
 
 Rollback a pipeline by creating a new latest version from an older version:
 

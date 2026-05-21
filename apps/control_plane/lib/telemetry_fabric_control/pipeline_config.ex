@@ -69,11 +69,11 @@ defmodule TelemetryFabricControl.PipelineConfig do
   defp validate_route_exporters(routes, exporters) do
     exporter_names =
       exporters
-      |> Enum.map(&Map.get(&1, :name))
+      |> Enum.map(&map_get(&1, :name))
       |> MapSet.new()
 
     routes
-    |> Enum.flat_map(&Map.get(&1, :exporters, []))
+    |> Enum.flat_map(&map_get(&1, :exporters, []))
     |> Enum.find(fn exporter -> not MapSet.member?(exporter_names, exporter) end)
     |> case do
       nil -> :ok
@@ -123,10 +123,12 @@ defmodule TelemetryFabricControl.PipelineConfig do
     ]
   end
 
-  defp map_get(map, key) do
+  defp map_get(map, key, default \\ nil)
+
+  defp map_get(map, key, default) do
     case Map.fetch(map, key) do
       {:ok, value} -> value
-      :error -> Map.get(map, Atom.to_string(key))
+      :error -> Map.get(map, Atom.to_string(key), default)
     end
   end
 

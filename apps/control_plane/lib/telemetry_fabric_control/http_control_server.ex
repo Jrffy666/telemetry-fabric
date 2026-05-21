@@ -197,6 +197,16 @@ defmodule TelemetryFabricControl.HttpControlServer do
     end
   end
 
+  defp route_request(%{method: "POST", path: "/v1/pipelines", body: body}) do
+    body
+    |> decode_request()
+    |> ControlService.put_pipeline()
+    |> case do
+      {:ok, pipeline} -> response(200, %{pipeline: encode_pipeline(pipeline)})
+      error -> error_response(error)
+    end
+  end
+
   defp route_request(%{method: "POST", path: "/v1/pipelines/rollback", body: body}) do
     body
     |> decode_request()
@@ -245,6 +255,10 @@ defmodule TelemetryFabricControl.HttpControlServer do
       "pipeline" -> :pipeline
       "target_version" -> :target_version
       "actor" -> :actor
+      "receivers" -> :receivers
+      "processors" -> :processors
+      "exporters" -> :exporters
+      "routes" -> :routes
       "kind" -> :kind
       "reason" -> :reason
       other -> other

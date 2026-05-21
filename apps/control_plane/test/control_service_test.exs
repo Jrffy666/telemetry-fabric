@@ -149,6 +149,66 @@ defmodule TelemetryFabricControl.ControlServiceTest do
     assert reason =~ "version 3"
   end
 
+  test "publishes pipeline configs and exposes the release as a config update" do
+    attrs = %{
+      tenant_id: "payments-prod",
+      pipeline: "default",
+      actor: "operator",
+      receivers: [
+        %{"name" => "tf-line", "protocol" => "tf_line", "endpoint" => "127.0.0.1:4319"}
+      ],
+      processors: [
+        %{"name" => "memory-limiter", "enabled" => true},
+        %{"name" => "tenant-rate-limit", "enabled" => true}
+      ],
+      exporters: [
+        %{"name" => "stdout", "protocol" => "stdout", "endpoint" => "stdout://local"}
+      ],
+      routes: [
+        %{"signal" => "trace", "exporters" => ["stdout"]}
+      ]
+    }
+
+    assert {:ok, pipeline} = ControlService.put_pipeline(attrs)
+    assert pipeline.version == 1
+
+    assert {:ok, %RegisterAgentResponse{config_version: 1}} =
+             ControlService.register_agent(%{
+               agent_id: "agent-1",
+               tenant_id: "payments-prod",
+               hostname: "node-a",
+               version: "0.1.0"
+             })
+
+    assert {:ok, %ConfigUpdate{version: 1, pipeline_config: payload}} =
+             ControlService.config_update(%{
+               agent_id: "agent-1",
+               tenant_id: "payments-prod",
+               current_version: 0
+             })
+
+    assert payload =~ "tenant-rate-limit"
+
+    assert {:ok, updated} =
+             ControlService.put_pipeline(%{
+               attrs
+               | processors: [%{"name" => "redact", "enabled" => true}]
+             })
+
+    assert updated.version == 2
+
+    assert {:ok, [%ControlCommand{kind: :reload_config, reason: reason}]} =
+             ControlService.heartbeat(%{
+               agent_id: "agent-1",
+               tenant_id: "payments-prod",
+               config_version: 1
+             })
+
+    assert reason =~ "version 2"
+
+    assert Enum.any?(AuditLog.list(:all), &(&1.action == "pipeline.updated"))
+  end
+
   test "heartbeat drains queued operator commands" do
     "payments-prod"
     |> SamplePipeline.build()
