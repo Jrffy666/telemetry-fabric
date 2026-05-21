@@ -11,6 +11,7 @@ Implemented or represented:
 - Pipeline validation before runtime use.
 - Audit events for agent registration, pipeline changes, and operator command
   delivery.
+- Per-tenant queue quotas and processor-level ingest rate limiting.
 - No inline secret model in the protocol definitions.
 - OTLP/HTTP exporter TLS for `https://` endpoints, with custom CA and optional
   client certificates.
@@ -20,10 +21,9 @@ Implemented or represented:
 ## Production Requirements
 
 - mTLS for all agent-to-control-plane communication.
-- Signed API keys for telemetry ingestion.
-- Per-tenant rate limits and queue quotas.
+- Signed API keys and policy controls for telemetry ingestion.
 - RBAC for all control-plane APIs.
 - Immutable audit log storage.
-- Redaction processor for sensitive attributes.
+- Centralized redaction policy management.
 - Envelope encryption for stored exporter credentials.
 - Certificate rotation workflow for agents and gateways.

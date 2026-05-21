@@ -31,6 +31,8 @@ processors:
     fields:
       - http.request.header.authorization
       - db.statement
+  tenant-rate-limit:
+    enabled: true
 
 exporters:
   stdout:

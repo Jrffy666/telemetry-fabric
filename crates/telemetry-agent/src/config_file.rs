@@ -267,6 +267,8 @@ processors:
     enabled: true
   redact:
     enabled: true
+  tenant-rate-limit:
+    enabled: true
 exporters:
   stdout:
     protocol: otlp_http_json
@@ -308,6 +310,12 @@ limits:
         );
         assert_eq!(config.routes[0].signal, SignalKind::Trace);
         assert_eq!(config.limits.max_queue_bytes, 1024);
+        assert!(
+            config
+                .processors
+                .iter()
+                .any(|processor| processor.kind == ProcessorKind::TenantRateLimit)
+        );
         Ok(())
     }
 

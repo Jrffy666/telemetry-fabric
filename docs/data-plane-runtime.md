@@ -43,12 +43,13 @@ Implemented:
 
 - `MemoryLimiterProcessor`: drops records whose estimated size exceeds the
   configured tenant record limit.
+- `TenantRateLimitProcessor`: drops records when a tenant exceeds the
+  configured `max_ingest_bytes_per_second` budget in a one-second window.
 - `RedactProcessor`: masks sensitive attributes such as authorization headers,
   passwords, secrets, tokens, and database statements.
 
 Planned:
 
-- Tenant rate limiting.
 - Tail-based sampling.
 - Resource attribute enrichment.
 - Log body redaction with structured parsers.
@@ -180,6 +181,8 @@ The file controls:
 - exporters and endpoints
 - routes by signal type
 - tenant limits such as `max_queue_bytes`
+- tenant ingest rate budgets such as `max_ingest_bytes_per_second` when the
+  `tenant-rate-limit` processor is enabled
 
 Command-line flags such as `--tenant`, `--otlp-grpc`, `--otlp-http`, `--listen`, and
 `--otlp-export-endpoint` can still override runtime behavior for local testing

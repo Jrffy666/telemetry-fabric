@@ -51,7 +51,8 @@ The data plane owns hot-path telemetry work:
 - Backpressure.
 
 The first Rust implementation includes core data models, routing validation, a
-segmented disk queue, record processors, exporter traits, a minimal TCP line
+segmented disk queue, record processors for memory limiting, redaction, and
+tenant rate limiting, exporter traits, a minimal TCP line
 receiver, OTLP/gRPC plus OTLP/HTTP protobuf/JSON trace/metrics/logs paths, and
 a Prometheus Remote Write metrics exporter. Metrics support gauge, sum,
 histogram, exponential histogram, and summary datapoints in this slice. Kafka

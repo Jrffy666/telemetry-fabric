@@ -204,6 +204,11 @@ impl PipelineConfig {
                 "max_queue_bytes must be greater than zero".to_string(),
             ));
         }
+        if self.limits.max_ingest_bytes_per_second == 0 {
+            return Err(PipelineError::InvalidConfig(
+                "max_ingest_bytes_per_second must be greater than zero".to_string(),
+            ));
+        }
 
         validate_unique_names(
             "receiver",
@@ -289,5 +294,23 @@ mod tests {
             .unwrap_or_else(|| PipelineError::InvalidConfig("expected error".to_string()));
 
         assert_eq!(error, PipelineError::UnknownExporter("missing".to_string()));
+    }
+
+    #[test]
+    fn rejects_zero_ingest_rate_limit() {
+        let mut config = PipelineConfig::default();
+        config.limits.max_ingest_bytes_per_second = 0;
+
+        let error = config
+            .validate()
+            .err()
+            .unwrap_or_else(|| PipelineError::InvalidConfig("expected error".to_string()));
+
+        assert_eq!(
+            error,
+            PipelineError::InvalidConfig(
+                "max_ingest_bytes_per_second must be greater than zero".to_string()
+            )
+        );
     }
 }

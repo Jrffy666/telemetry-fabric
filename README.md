@@ -16,7 +16,8 @@ This repository currently contains:
 - A Rust workspace with data-plane core models.
 - A durable segmented disk queue for local buffering.
 - A batch-oriented runtime that only advances queue cursors after successful export.
-- Record processors for memory limiting and sensitive attribute redaction.
+- Record processors for memory limiting, tenant rate limiting, and sensitive
+  attribute redaction.
 - Stdout, file, OTLP/gRPC, OTLP/HTTP protobuf/JSON, and Prometheus Remote Write
   exporters behind a stable async exporter trait, including HTTPS and optional
   client certificate support for HTTP-based exporters.
