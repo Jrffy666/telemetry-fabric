@@ -32,7 +32,7 @@ defmodule TelemetryFabricControl.PostgresLivePersistenceTest do
 
       reset_tables!()
 
-      on_exit(fn -> reset_tables!() end)
+      on_exit(fn -> cleanup_tables!() end)
 
       :ok
     end
@@ -128,6 +128,20 @@ defmodule TelemetryFabricControl.PostgresLivePersistenceTest do
         """,
         []
       )
+    end
+
+    defp cleanup_tables! do
+      case LiveRepo.start_link(url: @database_url, pool_size: 1) do
+        {:ok, pid} ->
+          try do
+            reset_tables!()
+          after
+            Supervisor.stop(pid)
+          end
+
+        {:error, {:already_started, _pid}} ->
+          reset_tables!()
+      end
     end
   else
     @tag skip:
