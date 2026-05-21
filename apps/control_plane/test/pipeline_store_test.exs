@@ -106,7 +106,7 @@ defmodule TelemetryFabricControl.PipelineStoreTest do
   end
 
   defp tmp_dir(name) do
-    root = Path.expand("../../../.tmp/control_plane_tests", __DIR__)
+    root = Path.join([".tmp", "control_plane_tests"])
     path = Path.join(root, "#{name}-#{System.unique_integer([:positive, :monotonic])}")
     File.rm_rf!(path)
     File.mkdir_p!(path)

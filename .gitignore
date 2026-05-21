@@ -5,6 +5,7 @@ deps/
 .telemetry-fabric/
 .tmp/
 mix_tmp/
+.mix_tmp/
 rel_tmp/
 *.ez
 *.beam

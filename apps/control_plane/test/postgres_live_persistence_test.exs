@@ -102,6 +102,73 @@ defmodule TelemetryFabricControl.PostgresLivePersistenceTest do
                audit_count
     end
 
+    test "postgres primary storage serves the control workflow" do
+      System.put_env("TELEMETRY_FABRIC_CONTROL_STORAGE", "postgres")
+      System.put_env("TELEMETRY_FABRIC_CONTROL_DATABASE_URL", @database_url)
+
+      on_exit(fn ->
+        System.delete_env("TELEMETRY_FABRIC_CONTROL_STORAGE")
+        System.delete_env("TELEMETRY_FABRIC_CONTROL_DATABASE_URL")
+      end)
+
+      start_supervised!(TelemetryFabricControl.Repo)
+      assert :ok = PostgresMigrator.migrate(TelemetryFabricControl.Repo)
+
+      config = SamplePipeline.build("payments-prod")
+
+      assert {:ok, pipeline} =
+               ControlService.put_pipeline(%{
+                 tenant_id: config.tenant_id,
+                 pipeline: config.name,
+                 actor: "operator",
+                 receivers: config.receivers,
+                 processors: config.processors,
+                 exporters: config.exporters,
+                 routes: config.routes
+               })
+
+      assert pipeline.version == 1
+
+      assert {:ok, registered} =
+               ControlService.register_agent(%{
+                 agent_id: "agent-postgres",
+                 tenant_id: "payments-prod",
+                 hostname: "node-a",
+                 version: "0.1.0"
+               })
+
+      assert registered.accepted
+      assert registered.config_version == 1
+
+      assert {:ok, update} =
+               ControlService.config_update(%{
+                 agent_id: "agent-postgres",
+                 tenant_id: "payments-prod",
+                 current_version: 0
+               })
+
+      assert update.version == 1
+      assert byte_size(update.checksum) == 64
+
+      assert {:ok, command} =
+               ControlService.enqueue_command("agent-postgres", :pause_exports, "maintenance")
+
+      assert command.kind == :pause_exports
+
+      assert {:ok, [delivered]} =
+               ControlService.heartbeat(%{
+                 agent_id: "agent-postgres",
+                 tenant_id: "payments-prod",
+                 config_version: 1
+               })
+
+      assert delivered.command_id == command.command_id
+
+      assert scalar!("SELECT status FROM agent_commands WHERE command_id = $1", [
+               command.command_id
+             ]) == "delivered"
+    end
+
     defp count!(table, where_clause, params) do
       %{rows: [[count]]} =
         SQL.query!(LiveRepo, "SELECT count(*) FROM #{table} WHERE #{where_clause}", params)

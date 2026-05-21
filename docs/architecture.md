@@ -21,10 +21,10 @@ The current OTP control domain includes:
 
 - File-backed MVP persistence for agent registry, pipeline versions, command
   queue, and audit events.
-- PostgreSQL schema, row codecs, Ecto schemas, Repo wiring, migration task, and
-  a periodic `Ecto.Multi` snapshot sync for the production persistence model,
-  covering tenants, agents, pipeline versions, pending and delivered commands,
-  and audit events.
+- PostgreSQL schema, row codecs, Ecto schemas, Repo wiring, migration task,
+  periodic `Ecto.Multi` snapshot sync, and an opt-in PostgreSQL-primary store
+  for tenants, agents, pipeline versions, pending and delivered commands, and
+  audit events.
 - A protocol-neutral `ControlService` that mirrors the AgentControl protobuf
   workflow: agent registration, heartbeat handling, config update generation,
   status reporting, pipeline publication and rollback, and queued operator
@@ -33,10 +33,11 @@ The current OTP control domain includes:
   command enqueue, and command delivery.
 - YAML pipeline payload generation with a SHA-256 checksum so a future transport
   adapter can return `ConfigUpdate` messages without changing the domain API.
-- A dependency-free MVP HTTP adapter for local integration and smoke testing.
+- A dependency-free MVP HTTP adapter for local integration and smoke testing,
+  with optional bearer-token authorization and TLS/mTLS.
 
 The production Phoenix API and gRPC transport layer are still future adapters
-and should be built on top of `ControlService` and the PostgreSQL schema/codec
+and should be built on top of `ControlService` and the PostgreSQL store
 boundary. CI now runs the live PostgreSQL persistence test against a disposable
 database.
 

@@ -27,14 +27,27 @@ spec:
       labels:
         app.kubernetes.io/name: telemetry-fabric-control-plane
     spec:
+      securityContext:
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: control-plane
           image: telemetry-fabric/control-plane:0.1.0
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            capabilities:
+              drop:
+                - ALL
           env:
             - name: TELEMETRY_FABRIC_CONTROL_HTTP_LISTEN
               value: "0.0.0.0:4001"
             - name: TELEMETRY_FABRIC_CONTROL_DATA_DIR
               value: /var/lib/telemetry-fabric/control-plane
+            - name: TELEMETRY_FABRIC_CONTROL_STORAGE
+              value: "otp"
           ports:
             - name: http
               containerPort: 4001
@@ -53,10 +66,14 @@ spec:
           volumeMounts:
             - name: data
               mountPath: /var/lib/telemetry-fabric/control-plane
+            - name: tmp
+              mountPath: /tmp
       volumes:
         - name: data
           persistentVolumeClaim:
             claimName: telemetry-fabric-control-plane-data
+        - name: tmp
+          emptyDir: {}
 ---
 apiVersion: v1
 kind: Service

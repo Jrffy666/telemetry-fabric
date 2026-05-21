@@ -105,6 +105,11 @@ Start the agent with the MVP HTTP control-plane client:
 cargo run -p telemetry-agent -- --tenant payments-prod --agent-id agent-1 --otlp-grpc 127.0.0.1:4317 --control-endpoint http://127.0.0.1:4001
 ```
 
+For a protected control plane, pass an agent token with
+`--control-auth-token` or `TELEMETRY_FABRIC_CONTROL_AUTH_TOKEN`. HTTPS control
+endpoints support `--control-ca-file`, `--control-cert-file`,
+`--control-key-file`, and `--control-server-name` for private CAs and mTLS.
+
 The client registers once, then sends periodic heartbeats. When the control
 plane returns `reload_config`, the agent fetches `/v1/agents/config`, verifies
 the SHA-256 checksum, parses the YAML pipeline, and reloads processors,
@@ -146,11 +151,47 @@ $env:TELEMETRY_FABRIC_CONTROL_DATA_DIR = "../../.telemetry-fabric/control-plane"
 mix.bat run --no-halt
 ```
 
+On Windows, if `mix.bat test` fails inside `Mix.Sync.PubSub` with
+`File.mkdir_p!` reporting `:enotdir` for an existing absolute temp directory,
+run Mix through the project-local wrapper:
+
+```powershell
+elixir.bat .\scripts\mix_windows.exs test
+```
+
+From the repository root, use the script's full path:
+
+```powershell
+elixir.bat .\apps\control_plane\scripts\mix_windows.exs test
+```
+
+The wrapper patches `File.mkdir_p/1` and Mix's Windows temp lock/pubsub roots
+for the current VM process only. Test persistence paths stay relative to the
+app working directory so they do not depend on Windows absolute-path mkdir
+behavior.
+
 Run the control plane with the MVP HTTP control API:
 
 ```powershell
 $env:TELEMETRY_FABRIC_CONTROL_HTTP_LISTEN = "127.0.0.1:4001"
 mix.bat run --no-halt
+```
+
+Enable HTTP API authorization by setting one or both tokens:
+
+```powershell
+$env:TELEMETRY_FABRIC_CONTROL_AGENT_TOKEN = "agent-token"
+$env:TELEMETRY_FABRIC_CONTROL_OPERATOR_TOKEN = "operator-token"
+```
+
+Enable TLS or mTLS for the control API:
+
+```powershell
+$env:TELEMETRY_FABRIC_CONTROL_TLS_ENABLED = "true"
+$env:TELEMETRY_FABRIC_CONTROL_TLS_CERT_FILE = "certs/server.pem"
+$env:TELEMETRY_FABRIC_CONTROL_TLS_KEY_FILE = "certs/server-key.pem"
+$env:TELEMETRY_FABRIC_CONTROL_TLS_REQUIRE_CLIENT_AUTH = "true"
+$env:TELEMETRY_FABRIC_CONTROL_TLS_CA_FILE = "certs/ca.pem"
 ```
 
 Available HTTP endpoints:
@@ -264,6 +305,11 @@ sync loop, or tune `TELEMETRY_FABRIC_CONTROL_POSTGRES_SYNC_INTERVAL_MS`. The
 live PostgreSQL persistence test is wired into CI with a disposable PostgreSQL
 service. The remaining production work is the Phoenix API and gRPC config
 stream.
+
+Set `TELEMETRY_FABRIC_CONTROL_STORAGE=postgres` to make PostgreSQL the
+control-plane source of truth instead of the file-backed OTP stores. This mode
+requires `TELEMETRY_FABRIC_CONTROL_DATABASE_URL` and disables the periodic
+snapshot sync.
 
 ## Docker And Kubernetes
 

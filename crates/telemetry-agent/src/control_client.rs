@@ -1,11 +1,17 @@
 use serde_yaml::Value;
 use std::error::Error;
 use std::fmt::{Display, Formatter};
-use telemetry_core::PipelineConfig;
+use std::fs;
+use std::io::BufReader;
+use std::sync::Arc;
+use telemetry_core::{PipelineConfig, TlsConfig};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
+use tokio_rustls::{TlsConnector, client::TlsStream};
 
 use crate::config_file::parse_pipeline_config;
+use rustls::pki_types::{CertificateDer, PrivateKeyDer, ServerName};
+use rustls::{ClientConfig, RootCertStore};
 
 type DynError = Box<dyn Error + Send + Sync>;
 
@@ -16,12 +22,26 @@ pub struct ControlClient {
     tenant_id: String,
     hostname: String,
     version: String,
+    security: ControlClientSecurity,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct HttpEndpoint {
+    scheme: HttpScheme,
     host: String,
     port: u16,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum HttpScheme {
+    Http,
+    Https,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ControlClientSecurity {
+    pub auth_token: Option<String>,
+    pub tls: TlsConfig,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -73,12 +93,13 @@ impl Display for ControlClientError {
 impl Error for ControlClientError {}
 
 impl ControlClient {
-    pub fn new(
+    pub fn new_with_security(
         endpoint: &str,
         agent_id: String,
         tenant_id: String,
         hostname: String,
         version: String,
+        security: ControlClientSecurity,
     ) -> Result<Self, DynError> {
         Ok(Self {
             endpoint: parse_http_endpoint(endpoint)?,
@@ -86,6 +107,7 @@ impl ControlClient {
             tenant_id,
             hostname,
             version,
+            security,
         })
     }
 
@@ -129,7 +151,10 @@ impl ControlClient {
     }
 
     async fn post_json(&self, path: &str, body: &str) -> Result<Value, DynError> {
-        let mut stream = TcpStream::connect((self.endpoint.host.as_str(), self.endpoint.port))
+        let request = self.render_post_request(path, body)?;
+        let mut stream = self
+            .endpoint
+            .connect(&self.security.tls)
             .await
             .map_err(|err| {
                 ControlClientError(format!(
@@ -137,18 +162,38 @@ impl ControlClient {
                     self.endpoint.host, self.endpoint.port
                 ))
             })?;
-
-        let request = format!(
-            "POST {path} HTTP/1.1\r\nHost: {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-            self.endpoint.host,
-            body.len()
-        );
         stream.write_all(request.as_bytes()).await?;
+        stream.write_all(body.as_bytes()).await?;
+        stream.shutdown().await?;
 
         let mut response = Vec::new();
         stream.read_to_end(&mut response).await?;
         let response = String::from_utf8(response)?;
         parse_http_json_response(&response)
+    }
+
+    fn render_post_request(&self, path: &str, body: &str) -> Result<String, DynError> {
+        let mut request = format!(
+            "POST {path} HTTP/1.1\r\nHost: {}:{}\r\nContent-Type: application/json\r\nContent-Length: {}\r\n",
+            self.endpoint.host,
+            self.endpoint.port,
+            body.len()
+        );
+
+        if let Some(token) = &self.security.auth_token {
+            if token.contains('\r') || token.contains('\n') {
+                return Err(ControlClientError(
+                    "control auth token must not contain newline characters".to_string(),
+                )
+                .into());
+            }
+            request.push_str("Authorization: Bearer ");
+            request.push_str(token);
+            request.push_str("\r\n");
+        }
+
+        request.push_str("Connection: close\r\n\r\n");
+        Ok(request)
     }
 }
 
@@ -167,9 +212,13 @@ pub fn validate_config_update(update: &ConfigUpdate) -> Result<PipelineConfig, D
 
 fn parse_http_endpoint(endpoint: &str) -> Result<HttpEndpoint, DynError> {
     let endpoint = endpoint.trim();
-    let Some(without_scheme) = endpoint.strip_prefix("http://") else {
+    let (scheme, without_scheme) = if let Some(rest) = endpoint.strip_prefix("https://") {
+        (HttpScheme::Https, rest)
+    } else if let Some(rest) = endpoint.strip_prefix("http://") {
+        (HttpScheme::Http, rest)
+    } else {
         return Err(ControlClientError(
-            "control endpoint must use http:// for the MVP client".to_string(),
+            "control endpoint must use http:// or https://".to_string(),
         )
         .into());
     };
@@ -181,10 +230,15 @@ fn parse_http_endpoint(endpoint: &str) -> Result<HttpEndpoint, DynError> {
         .into());
     }
 
+    let default_port = match scheme {
+        HttpScheme::Http => 80,
+        HttpScheme::Https => 443,
+    };
+
     let (host, port) = if let Some((host, port)) = without_scheme.rsplit_once(':') {
         (host.to_string(), port.parse::<u16>()?)
     } else {
-        (without_scheme.to_string(), 80)
+        (without_scheme.to_string(), default_port)
     };
 
     if host.trim().is_empty() {
@@ -193,7 +247,107 @@ fn parse_http_endpoint(endpoint: &str) -> Result<HttpEndpoint, DynError> {
         );
     }
 
-    Ok(HttpEndpoint { host, port })
+    Ok(HttpEndpoint { scheme, host, port })
+}
+
+impl HttpEndpoint {
+    async fn connect(&self, tls: &TlsConfig) -> Result<ControlStream, DynError> {
+        let tcp = TcpStream::connect((self.host.as_str(), self.port)).await?;
+        match self.scheme {
+            HttpScheme::Http => Ok(ControlStream::Plain(tcp)),
+            HttpScheme::Https => {
+                let connector = TlsConnector::from(Arc::new(client_tls_config(tls)?));
+                let server_name = tls
+                    .server_name
+                    .as_deref()
+                    .unwrap_or(self.host.as_str())
+                    .to_string();
+                let server_name: ServerName<'static> = ServerName::try_from(server_name).map_err(
+                    |err: rustls::pki_types::InvalidDnsNameError| {
+                        ControlClientError(format!("invalid control TLS server name: {err}"))
+                    },
+                )?;
+                let stream = connector.connect(server_name, tcp).await?;
+                Ok(ControlStream::Tls(Box::new(stream)))
+            }
+        }
+    }
+}
+
+enum ControlStream {
+    Plain(TcpStream),
+    Tls(Box<TlsStream<TcpStream>>),
+}
+
+impl ControlStream {
+    async fn write_all(&mut self, bytes: &[u8]) -> std::io::Result<()> {
+        match self {
+            Self::Plain(stream) => stream.write_all(bytes).await,
+            Self::Tls(stream) => stream.write_all(bytes).await,
+        }
+    }
+
+    async fn shutdown(&mut self) -> std::io::Result<()> {
+        match self {
+            Self::Plain(stream) => stream.shutdown().await,
+            Self::Tls(stream) => stream.shutdown().await,
+        }
+    }
+
+    async fn read_to_end(&mut self, buffer: &mut Vec<u8>) -> std::io::Result<usize> {
+        match self {
+            Self::Plain(stream) => stream.read_to_end(buffer).await,
+            Self::Tls(stream) => stream.read_to_end(buffer).await,
+        }
+    }
+}
+
+fn client_tls_config(tls: &TlsConfig) -> Result<ClientConfig, DynError> {
+    let mut roots = RootCertStore::empty();
+    if let Some(ca_file) = &tls.ca_file {
+        for cert in load_certificates(ca_file)? {
+            roots
+                .add(cert)
+                .map_err(|err| ControlClientError(format!("invalid control CA file: {err}")))?;
+        }
+    } else {
+        roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+    }
+
+    let builder = ClientConfig::builder().with_root_certificates(roots);
+    if let (Some(cert_file), Some(key_file)) = (&tls.cert_file, &tls.key_file) {
+        builder
+            .with_client_auth_cert(load_certificates(cert_file)?, load_private_key(key_file)?)
+            .map_err(|err| ControlClientError(format!("invalid control client cert/key: {err}")))
+            .map_err(Into::into)
+    } else {
+        Ok(builder.with_no_client_auth())
+    }
+}
+
+fn load_certificates(path: &str) -> Result<Vec<CertificateDer<'static>>, DynError> {
+    let file = fs::File::open(path)?;
+    let mut reader = BufReader::new(file);
+    rustls_pemfile::certs(&mut reader)
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|err| {
+            ControlClientError(format!(
+                "failed to read control TLS certificate {path}: {err}"
+            ))
+            .into()
+        })
+}
+
+fn load_private_key(path: &str) -> Result<PrivateKeyDer<'static>, DynError> {
+    let file = fs::File::open(path)?;
+    let mut reader = BufReader::new(file);
+    rustls_pemfile::private_key(&mut reader)
+        .map_err(|err| {
+            ControlClientError(format!(
+                "failed to read control TLS private key {path}: {err}"
+            ))
+        })?
+        .ok_or_else(|| ControlClientError(format!("private key not found in {path}")).into())
 }
 
 fn parse_http_json_response(response: &str) -> Result<Value, DynError> {
@@ -413,11 +567,20 @@ mod tests {
         assert_eq!(
             parse_http_endpoint("http://127.0.0.1:4001")?,
             HttpEndpoint {
+                scheme: HttpScheme::Http,
                 host: "127.0.0.1".to_string(),
                 port: 4001
             }
         );
-        assert!(parse_http_endpoint("https://127.0.0.1:4001").is_err());
+        assert_eq!(
+            parse_http_endpoint("https://control-plane:8443")?,
+            HttpEndpoint {
+                scheme: HttpScheme::Https,
+                host: "control-plane".to_string(),
+                port: 8443
+            }
+        );
+        assert_eq!(parse_http_endpoint("https://control-plane")?.port, 443);
         Ok(())
     }
 

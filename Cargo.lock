@@ -850,6 +850,7 @@ dependencies = [
  "tokio",
  "tokio-rustls",
  "tonic",
+ "webpki-roots",
 ]
 
 [[package]]

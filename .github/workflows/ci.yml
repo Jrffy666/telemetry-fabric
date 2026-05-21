@@ -52,3 +52,15 @@ jobs:
         env:
           TELEMETRY_FABRIC_CONTROL_POSTGRES_INTEGRATION: "1"
           TELEMETRY_FABRIC_CONTROL_TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/telemetry_fabric_test
+
+  deploy-assets:
+    name: Deployment Assets
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker compose -f deploy/docker/docker-compose.yml config
+      - run: docker build -f deploy/docker/telemetry-agent.Dockerfile -t telemetry-fabric/agent:ci .
+      - run: docker build -f deploy/docker/control-plane.Dockerfile -t telemetry-fabric/control-plane:ci .
+      - uses: azure/setup-helm@v4
+      - run: helm lint deploy/helm/telemetry-fabric
+      - run: helm template telemetry-fabric deploy/helm/telemetry-fabric --set controlPlane.enabled=true

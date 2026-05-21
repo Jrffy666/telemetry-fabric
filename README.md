@@ -31,10 +31,12 @@ This repository currently contains:
   drain-before-restart, including delivered-state persistence and audit events.
 - An Elixir OTP control-plane skeleton.
 - PostgreSQL schema, state-to-row codec, Ecto schemas, Repo wiring, migration
-  task, and periodic snapshot sync for the next control-plane persistence
-  adapter.
+  task, periodic snapshot sync, and an opt-in PostgreSQL-primary control-plane
+  storage mode.
 - HTTP MVP control endpoints for agent registration, heartbeat, config fetch,
   status, command queueing, pipeline publication, and rollback.
+- Bearer-token authorization and optional TLS/mTLS for the control-plane HTTP
+  API, plus HTTPS/mTLS support in the agent control client.
 - Versioned pipeline rollback that creates a new latest config version and
   preserves rollback audit history.
 - Protobuf contracts for future agent-control and pipeline APIs.

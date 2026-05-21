@@ -14,6 +14,8 @@ spec:
       labels:
         {{- include "telemetry-fabric.labels" . | nindent 8 }}
     spec:
+      securityContext:
+        {{- toYaml .Values.agent.podSecurityContext | nindent 8 }}
       containers:
         - name: agent
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
@@ -40,7 +42,7 @@ spec:
             {{- end }}
             {{- else if .Values.controlPlane.enabled }}
             - "--control-endpoint"
-            - "http://{{ include "telemetry-fabric.controlPlaneName" . }}:{{ .Values.controlPlane.service.port }}"
+            - "{{ ternary "https" "http" .Values.controlPlane.tls.enabled }}://{{ include "telemetry-fabric.controlPlaneName" . }}:{{ .Values.controlPlane.service.port }}"
             - "--control-heartbeat-interval-ms"
             - {{ .Values.agent.controlHeartbeatIntervalMs | quote }}
             {{- if .Values.agent.agentIdFromPodName }}
@@ -55,6 +57,25 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.name
+            {{- if .Values.agent.controlAuthTokenSecret.name }}
+            - name: TELEMETRY_FABRIC_CONTROL_AUTH_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.agent.controlAuthTokenSecret.name | quote }}
+                  key: {{ .Values.agent.controlAuthTokenSecret.key | quote }}
+            {{- end }}
+            {{- if .Values.agent.controlTlsSecret.name }}
+            - name: TELEMETRY_FABRIC_CONTROL_CA_FILE
+              value: "{{ .Values.agent.controlTlsSecret.mountPath }}/{{ .Values.agent.controlTlsSecret.caKey }}"
+            - name: TELEMETRY_FABRIC_CONTROL_CERT_FILE
+              value: "{{ .Values.agent.controlTlsSecret.mountPath }}/{{ .Values.agent.controlTlsSecret.certKey }}"
+            - name: TELEMETRY_FABRIC_CONTROL_KEY_FILE
+              value: "{{ .Values.agent.controlTlsSecret.mountPath }}/{{ .Values.agent.controlTlsSecret.keyKey }}"
+            {{- if .Values.agent.controlTlsSecret.serverName }}
+            - name: TELEMETRY_FABRIC_CONTROL_SERVER_NAME
+              value: {{ .Values.agent.controlTlsSecret.serverName | quote }}
+            {{- end }}
+            {{- end }}
           ports:
             - name: otlp-grpc
               containerPort: {{ .Values.service.port }}
@@ -74,11 +95,27 @@ spec:
             periodSeconds: 10
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
+          securityContext:
+            {{- toYaml .Values.agent.securityContext | nindent 12 }}
           volumeMounts:
             - name: queue
               mountPath: /var/lib/telemetry-fabric
+            - name: tmp
+              mountPath: /tmp
+            {{- if .Values.agent.controlTlsSecret.name }}
+            - name: control-tls
+              mountPath: {{ .Values.agent.controlTlsSecret.mountPath | quote }}
+              readOnly: true
+            {{- end }}
       volumes:
         - name: queue
           hostPath:
             path: /var/lib/telemetry-fabric
             type: DirectoryOrCreate
+        - name: tmp
+          emptyDir: {}
+        {{- if .Values.agent.controlTlsSecret.name }}
+        - name: control-tls
+          secret:
+            secretName: {{ .Values.agent.controlTlsSecret.name | quote }}
+        {{- end }}

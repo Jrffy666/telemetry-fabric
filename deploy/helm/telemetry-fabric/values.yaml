@@ -12,9 +12,31 @@ agent:
   agentIdFromPodName: true
   queueDir: "/var/lib/telemetry-fabric/queue"
   tenant: "default"
+  controlAuthTokenSecret:
+    name: ""
+    key: token
+  controlTlsSecret:
+    name: ""
+    mountPath: /etc/telemetry-fabric/control-tls
+    caKey: ca.crt
+    certKey: tls.crt
+    keyKey: tls.key
+    serverName: ""
+  podSecurityContext:
+    fsGroup: 65532
+    seccompProfile:
+      type: RuntimeDefault
+  securityContext:
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
+    runAsNonRoot: true
+    capabilities:
+      drop:
+        - ALL
 
 controlPlane:
   enabled: false
+  storage: "otp"
   image:
     repository: telemetry-fabric/control-plane
     tag: "0.1.0"
@@ -27,6 +49,21 @@ controlPlane:
   databaseUrlSecret:
     name: ""
     key: database-url
+  auth:
+    agentTokenSecret:
+      name: ""
+      key: token
+    operatorTokenSecret:
+      name: ""
+      key: token
+  tls:
+    enabled: false
+    secretName: ""
+    mountPath: /etc/telemetry-fabric/control-plane-tls
+    certKey: tls.crt
+    keyKey: tls.key
+    caKey: ca.crt
+    requireClientAuth: false
   service:
     type: ClusterIP
     port: 4001
@@ -41,6 +78,17 @@ controlPlane:
     limits:
       cpu: 500m
       memory: 512Mi
+  podSecurityContext:
+    fsGroup: 65532
+    seccompProfile:
+      type: RuntimeDefault
+  securityContext:
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
+    runAsNonRoot: true
+    capabilities:
+      drop:
+        - ALL
 
 service:
   type: ClusterIP

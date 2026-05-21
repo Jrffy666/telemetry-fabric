@@ -16,11 +16,15 @@ spec:
       labels:
         {{- include "telemetry-fabric.controlPlaneLabels" . | nindent 8 }}
     spec:
+      securityContext:
+        {{- toYaml .Values.controlPlane.podSecurityContext | nindent 8 }}
       {{- if .Values.controlPlane.databaseUrlSecret.name }}
       initContainers:
         - name: migrate
           image: "{{ .Values.controlPlane.image.repository }}:{{ .Values.controlPlane.image.tag }}"
           imagePullPolicy: {{ .Values.controlPlane.image.pullPolicy }}
+          securityContext:
+            {{- toYaml .Values.controlPlane.securityContext | nindent 12 }}
           command:
             - /opt/telemetry-fabric-control/bin/telemetry_fabric_control
           args:
@@ -32,6 +36,9 @@ spec:
                 secretKeyRef:
                   name: {{ .Values.controlPlane.databaseUrlSecret.name | quote }}
                   key: {{ .Values.controlPlane.databaseUrlSecret.key | quote }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
       {{- end }}
       containers:
         - name: control-plane
@@ -42,6 +49,8 @@ spec:
               value: {{ .Values.controlPlane.httpListen | quote }}
             - name: TELEMETRY_FABRIC_CONTROL_DATA_DIR
               value: {{ .Values.controlPlane.dataDir | quote }}
+            - name: TELEMETRY_FABRIC_CONTROL_STORAGE
+              value: {{ .Values.controlPlane.storage | quote }}
             - name: TELEMETRY_FABRIC_CONTROL_POSTGRES_SYNC
               value: {{ .Values.controlPlane.postgresSync | quote }}
             - name: TELEMETRY_FABRIC_CONTROL_POSTGRES_SYNC_INTERVAL_MS
@@ -53,26 +62,75 @@ spec:
                   name: {{ .Values.controlPlane.databaseUrlSecret.name | quote }}
                   key: {{ .Values.controlPlane.databaseUrlSecret.key | quote }}
             {{- end }}
+            {{- if .Values.controlPlane.auth.agentTokenSecret.name }}
+            - name: TELEMETRY_FABRIC_CONTROL_AGENT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.controlPlane.auth.agentTokenSecret.name | quote }}
+                  key: {{ .Values.controlPlane.auth.agentTokenSecret.key | quote }}
+            {{- end }}
+            {{- if .Values.controlPlane.auth.operatorTokenSecret.name }}
+            - name: TELEMETRY_FABRIC_CONTROL_OPERATOR_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.controlPlane.auth.operatorTokenSecret.name | quote }}
+                  key: {{ .Values.controlPlane.auth.operatorTokenSecret.key | quote }}
+            {{- end }}
+            {{- if .Values.controlPlane.tls.enabled }}
+            - name: TELEMETRY_FABRIC_CONTROL_TLS_ENABLED
+              value: "true"
+            - name: TELEMETRY_FABRIC_CONTROL_TLS_CERT_FILE
+              value: "{{ .Values.controlPlane.tls.mountPath }}/{{ .Values.controlPlane.tls.certKey }}"
+            - name: TELEMETRY_FABRIC_CONTROL_TLS_KEY_FILE
+              value: "{{ .Values.controlPlane.tls.mountPath }}/{{ .Values.controlPlane.tls.keyKey }}"
+            - name: TELEMETRY_FABRIC_CONTROL_TLS_REQUIRE_CLIENT_AUTH
+              value: {{ .Values.controlPlane.tls.requireClientAuth | quote }}
+            {{- if .Values.controlPlane.tls.requireClientAuth }}
+            - name: TELEMETRY_FABRIC_CONTROL_TLS_CA_FILE
+              value: "{{ .Values.controlPlane.tls.mountPath }}/{{ .Values.controlPlane.tls.caKey }}"
+            {{- end }}
+            {{- end }}
           ports:
             - name: http
               containerPort: {{ .Values.controlPlane.service.port }}
           livenessProbe:
+            {{ if .Values.controlPlane.tls.requireClientAuth }}
+            tcpSocket:
+              port: http
+            {{ else }}
             httpGet:
               path: /healthz
               port: http
+              scheme: {{ ternary "HTTPS" "HTTP" .Values.controlPlane.tls.enabled }}
+            {{ end }}
             initialDelaySeconds: 10
             periodSeconds: 10
           readinessProbe:
+            {{ if .Values.controlPlane.tls.requireClientAuth }}
+            tcpSocket:
+              port: http
+            {{ else }}
             httpGet:
               path: /readyz
               port: http
+              scheme: {{ ternary "HTTPS" "HTTP" .Values.controlPlane.tls.enabled }}
+            {{ end }}
             initialDelaySeconds: 5
             periodSeconds: 10
           resources:
             {{- toYaml .Values.controlPlane.resources | nindent 12 }}
+          securityContext:
+            {{- toYaml .Values.controlPlane.securityContext | nindent 12 }}
           volumeMounts:
             - name: data
               mountPath: {{ .Values.controlPlane.dataDir | quote }}
+            - name: tmp
+              mountPath: /tmp
+            {{- if .Values.controlPlane.tls.enabled }}
+            - name: control-plane-tls
+              mountPath: {{ .Values.controlPlane.tls.mountPath | quote }}
+              readOnly: true
+            {{- end }}
       volumes:
         - name: data
           {{- if .Values.controlPlane.persistence.enabled }}
@@ -81,4 +139,11 @@ spec:
           {{- else }}
           emptyDir: {}
           {{- end }}
+        - name: tmp
+          emptyDir: {}
+        {{- if .Values.controlPlane.tls.enabled }}
+        - name: control-plane-tls
+          secret:
+            secretName: {{ .Values.controlPlane.tls.secretName | quote }}
+        {{- end }}
 {{- end }}

@@ -4,7 +4,7 @@ services:
     environment:
       POSTGRES_DB: telemetry_fabric
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d telemetry_fabric"]
       interval: 5s
@@ -20,7 +20,10 @@ services:
     environment:
       TELEMETRY_FABRIC_CONTROL_HTTP_LISTEN: 0.0.0.0:4001
       TELEMETRY_FABRIC_CONTROL_DATA_DIR: /var/lib/telemetry-fabric/control-plane
-      TELEMETRY_FABRIC_CONTROL_DATABASE_URL: postgres://postgres:postgres@postgres:5432/telemetry_fabric
+      TELEMETRY_FABRIC_CONTROL_DATABASE_URL: postgres://postgres:${POSTGRES_PASSWORD:-postgres}@postgres:5432/telemetry_fabric
+      TELEMETRY_FABRIC_CONTROL_STORAGE: postgres
+      TELEMETRY_FABRIC_CONTROL_AGENT_TOKEN: ${TELEMETRY_FABRIC_CONTROL_AGENT_TOKEN:-local-agent-token}
+      TELEMETRY_FABRIC_CONTROL_OPERATOR_TOKEN: ${TELEMETRY_FABRIC_CONTROL_OPERATOR_TOKEN:-local-operator-token}
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
@@ -58,6 +61,8 @@ services:
         "--queue-dir",
         "/var/lib/telemetry-fabric/queue"
       ]
+    environment:
+      TELEMETRY_FABRIC_CONTROL_AUTH_TOKEN: ${TELEMETRY_FABRIC_CONTROL_AGENT_TOKEN:-local-agent-token}
     ports:
       - "4317:4317"
       - "13133:13133"

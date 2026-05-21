@@ -12,9 +12,20 @@ spec:
       labels:
         app.kubernetes.io/name: telemetry-fabric-agent
     spec:
+      securityContext:
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: agent
           image: telemetry-fabric/agent:0.1.0
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            capabilities:
+              drop:
+                - ALL
           args:
             - "--tenant"
             - "default"
@@ -53,8 +64,12 @@ spec:
           volumeMounts:
             - name: queue
               mountPath: /var/lib/telemetry-fabric
+            - name: tmp
+              mountPath: /tmp
       volumes:
         - name: queue
           hostPath:
             path: /var/lib/telemetry-fabric
             type: DirectoryOrCreate
+        - name: tmp
+          emptyDir: {}

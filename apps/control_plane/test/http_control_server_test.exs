@@ -220,14 +220,62 @@ defmodule TelemetryFabricControl.HttpControlServerTest do
     assert {200, %{"status" => "ok"}} = raw_request(port, "GET /healthz HTTP/1.1\r\n\r\n")
   end
 
-  defp post_json(port, path, body) do
+  test "enforces agent and operator bearer tokens" do
+    spec =
+      Supervisor.child_spec(
+        {HttpControlServer,
+         [
+           name: :auth_http_control_server,
+           host: "127.0.0.1",
+           port: 0,
+           agent_token: "agent-token",
+           operator_token: "operator-token"
+         ]},
+        id: :auth_http_control_server
+      )
+
+    server = start_supervised!(spec)
+    port = HttpControlServer.port(server)
+
+    assert {401, %{"error" => "missing_bearer_token"}} =
+             post_json(port, "/v1/agents/register", %{
+               agent_id: "agent-1",
+               tenant_id: "payments-prod"
+             })
+
+    assert {200, _body} =
+             post_json(
+               port,
+               "/v1/agents/register",
+               %{
+                 agent_id: "agent-1",
+                 tenant_id: "payments-prod"
+               },
+               authorization: "Bearer agent-token"
+             )
+
+    assert {403, %{"error" => "invalid_bearer_token"}} =
+             post_json(port, "/v1/pipelines", pipeline_payload("payments-prod"),
+               authorization: "Bearer agent-token"
+             )
+
+    assert {200, _body} =
+             post_json(port, "/v1/pipelines", pipeline_payload("payments-prod"),
+               authorization: "Bearer operator-token"
+             )
+  end
+
+  defp post_json(port, path, body, opts \\ []) do
     payload = Json.encode!(body)
+    authorization = Keyword.get(opts, :authorization)
+    auth_header = if authorization, do: "Authorization: #{authorization}\r\n", else: ""
 
     raw_request(
       port,
       [
         "POST #{path} HTTP/1.1\r\n",
         "Host: 127.0.0.1\r\n",
+        auth_header,
         "Content-Type: application/json\r\n",
         "Content-Length: #{byte_size(payload)}\r\n",
         "\r\n",

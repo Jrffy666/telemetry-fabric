@@ -7,7 +7,8 @@ mod tf_line;
 
 use config_file::load_pipeline_config;
 use control_client::{
-    ConfigUpdate, ControlClient, ControlCommandKind, HeartbeatStats, validate_config_update,
+    ConfigUpdate, ControlClient, ControlClientSecurity, ControlCommandKind, HeartbeatStats,
+    validate_config_update,
 };
 use otlp::serve_otlp_grpc;
 use otlp_http::serve_otlp_http;
@@ -76,12 +77,13 @@ async fn run() -> Result<(), DynError> {
         };
         let agent_id = args.agent_id.clone().unwrap_or_else(default_agent_id);
         let hostname = default_hostname();
-        let client = ControlClient::new(
+        let client = ControlClient::new_with_security(
             &endpoint,
             agent_id,
             tenant_id,
             hostname,
             env!("CARGO_PKG_VERSION").to_string(),
+            control_client_security(&args),
         )?;
         spawn_control_worker(
             Arc::clone(&runtime),
@@ -493,6 +495,11 @@ struct Args {
     health_listen: Option<String>,
     control_endpoint: Option<String>,
     agent_id: Option<String>,
+    control_auth_token: Option<String>,
+    control_ca_file: Option<String>,
+    control_cert_file: Option<String>,
+    control_key_file: Option<String>,
+    control_server_name: Option<String>,
     flush_batch_size: usize,
     flush_interval_ms: u64,
     control_heartbeat_interval_ms: u64,
@@ -513,6 +520,11 @@ impl Args {
             health_listen: None,
             control_endpoint: None,
             agent_id: None,
+            control_auth_token: env::var("TELEMETRY_FABRIC_CONTROL_AUTH_TOKEN").ok(),
+            control_ca_file: env::var("TELEMETRY_FABRIC_CONTROL_CA_FILE").ok(),
+            control_cert_file: env::var("TELEMETRY_FABRIC_CONTROL_CERT_FILE").ok(),
+            control_key_file: env::var("TELEMETRY_FABRIC_CONTROL_KEY_FILE").ok(),
+            control_server_name: env::var("TELEMETRY_FABRIC_CONTROL_SERVER_NAME").ok(),
             flush_batch_size: 128,
             flush_interval_ms: 1000,
             control_heartbeat_interval_ms: 5000,
@@ -553,6 +565,23 @@ impl Args {
                 }
                 "--agent-id" => {
                     args.agent_id = Some(next_value(&mut values, "--agent-id")?);
+                }
+                "--control-auth-token" => {
+                    args.control_auth_token =
+                        Some(next_value(&mut values, "--control-auth-token")?);
+                }
+                "--control-ca-file" => {
+                    args.control_ca_file = Some(next_value(&mut values, "--control-ca-file")?);
+                }
+                "--control-cert-file" => {
+                    args.control_cert_file = Some(next_value(&mut values, "--control-cert-file")?);
+                }
+                "--control-key-file" => {
+                    args.control_key_file = Some(next_value(&mut values, "--control-key-file")?);
+                }
+                "--control-server-name" => {
+                    args.control_server_name =
+                        Some(next_value(&mut values, "--control-server-name")?);
                 }
                 "--flush-batch-size" => {
                     args.flush_batch_size =
@@ -711,6 +740,24 @@ fn build_pipeline_config(args: &Args) -> Result<PipelineConfig, DynError> {
     Ok(config)
 }
 
+fn control_client_security(args: &Args) -> ControlClientSecurity {
+    ControlClientSecurity {
+        auth_token: args.control_auth_token.clone(),
+        tls: TlsConfig {
+            enabled: args
+                .control_endpoint
+                .as_deref()
+                .map(|endpoint| endpoint.starts_with("https://"))
+                .unwrap_or(false),
+            ca_file: args.control_ca_file.clone(),
+            cert_file: args.control_cert_file.clone(),
+            key_file: args.control_key_file.clone(),
+            server_name: args.control_server_name.clone(),
+            require_client_auth: false,
+        },
+    }
+}
+
 fn next_value(
     values: &mut std::iter::Peekable<impl Iterator<Item = String>>,
     flag: &str,
@@ -767,8 +814,13 @@ fn print_help() {
            --otlp-http HOST:PORT Start the OTLP/HTTP protobuf trace, metrics, and logs receiver.\n\
            --otlp-export-endpoint HOST:PORT|URL Forward traces, metrics, and logs to an upstream OTLP/gRPC endpoint.\n\
            --health-listen HOST:PORT Start a JSON health endpoint for probes.\n\
-           --control-endpoint URL Register and heartbeat with the MVP HTTP control plane.\n\
+           --control-endpoint URL Register and heartbeat with the control plane over HTTP or HTTPS.\n\
            --agent-id ID       Agent id used for control-plane registration.\n\
+           --control-auth-token TOKEN Bearer token for agent control-plane calls. Can also use TELEMETRY_FABRIC_CONTROL_AUTH_TOKEN.\n\
+           --control-ca-file FILE Custom CA bundle for HTTPS control-plane calls.\n\
+           --control-cert-file FILE Client certificate for mTLS control-plane calls.\n\
+           --control-key-file FILE Client private key for mTLS control-plane calls.\n\
+           --control-server-name NAME Override HTTPS control-plane server name verification.\n\
            --flush-batch-size N Flush up to N queued records per background cycle.\n\
            --flush-interval-ms N Background flush interval in milliseconds.\n\
            --control-heartbeat-interval-ms N Control-plane heartbeat interval in milliseconds.\n\

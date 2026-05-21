@@ -11,6 +11,7 @@ defmodule TelemetryFabricControl.ControlService do
   alias TelemetryFabricControl.ControlCommand
   alias TelemetryFabricControl.PipelineConfig
   alias TelemetryFabricControl.PipelineStore
+  alias TelemetryFabricControl.PostgresControlStore
 
   defmodule RegisterAgentResponse do
     @moduledoc false
@@ -34,7 +35,7 @@ defmodule TelemetryFabricControl.ControlService do
       {:ok, config_version} = latest_config_version(tenant_id)
       attrs = Map.put_new(attrs, :config_version, 0)
 
-      case AgentRegistry.register(attrs) do
+      case register_agent_record(attrs) do
         {:ok, _agent} ->
           {:ok,
            %RegisterAgentResponse{
@@ -52,9 +53,9 @@ defmodule TelemetryFabricControl.ControlService do
   def config_update(attrs) when is_map(attrs) do
     with :ok <- require_text(:agent_id, Map.get(attrs, :agent_id)),
          :ok <- require_text(:tenant_id, Map.get(attrs, :tenant_id)),
-         {:ok, agent} <- AgentRegistry.get_agent(Map.fetch!(attrs, :agent_id)),
+         {:ok, agent} <- get_agent(Map.fetch!(attrs, :agent_id)),
          :ok <- require_same_tenant(agent, Map.fetch!(attrs, :tenant_id)),
-         {:ok, pipeline} <- PipelineStore.get_pipeline(agent.tenant_id, pipeline_name(attrs)) do
+         {:ok, pipeline} <- get_pipeline(agent.tenant_id, pipeline_name(attrs)) do
       current_version = Map.get(attrs, :current_version, 0)
 
       if pipeline.version > current_version do
@@ -68,8 +69,8 @@ defmodule TelemetryFabricControl.ControlService do
   def heartbeat(attrs) when is_map(attrs) do
     with :ok <- require_text(:agent_id, Map.get(attrs, :agent_id)),
          :ok <- require_text(:tenant_id, Map.get(attrs, :tenant_id)),
-         {:ok, agent} <- AgentRegistry.heartbeat(attrs),
-         queued_commands <- CommandQueue.drain(agent.agent_id),
+         {:ok, agent} <- heartbeat_agent(attrs),
+         {:ok, queued_commands} <- drain_commands(agent.agent_id),
          {:ok, latest_version} <- latest_config_version(agent.tenant_id) do
       derived_commands =
         if latest_version > agent.config_version do
@@ -91,15 +92,19 @@ defmodule TelemetryFabricControl.ControlService do
 
   def enqueue_command(agent_id, kind, reason \\ "") do
     if kind in ControlCommand.kinds() do
-      with {:ok, agent} <- AgentRegistry.get_agent(agent_id) do
-        CommandQueue.enqueue(
-          ControlCommand.new(%{
-            agent_id: agent.agent_id,
-            tenant_id: agent.tenant_id,
-            kind: kind,
-            reason: reason
-          })
-        )
+      if postgres_primary?() do
+        PostgresControlStore.enqueue_command(agent_id, kind, reason)
+      else
+        with {:ok, agent} <- AgentRegistry.get_agent(agent_id) do
+          CommandQueue.enqueue(
+            ControlCommand.new(%{
+              agent_id: agent.agent_id,
+              tenant_id: agent.tenant_id,
+              kind: kind,
+              reason: reason
+            })
+          )
+        end
       end
     else
       {:error, {:unknown_command_kind, kind}}
@@ -110,7 +115,7 @@ defmodule TelemetryFabricControl.ControlService do
     with :ok <- require_text(:tenant_id, Map.get(attrs, :tenant_id)),
          :ok <- require_text(:pipeline, pipeline_name(attrs)),
          {:ok, config} <- pipeline_from_attrs(attrs) do
-      PipelineStore.put_pipeline(config, Map.get(attrs, :actor, "operator"))
+      put_pipeline_config(config, Map.get(attrs, :actor, "operator"))
     end
   end
 
@@ -119,7 +124,7 @@ defmodule TelemetryFabricControl.ControlService do
          :ok <- require_text(:pipeline, pipeline_name(attrs)),
          {:ok, target_version} <-
            require_positive_integer(:target_version, Map.get(attrs, :target_version)) do
-      PipelineStore.rollback_pipeline(
+      rollback_pipeline_config(
         Map.fetch!(attrs, :tenant_id),
         pipeline_name(attrs),
         target_version,
@@ -131,7 +136,7 @@ defmodule TelemetryFabricControl.ControlService do
   def report_status(attrs) when is_map(attrs) do
     with :ok <- require_text(:agent_id, Map.get(attrs, :agent_id)),
          :ok <- require_text(:tenant_id, Map.get(attrs, :tenant_id)),
-         {:ok, agent} <- AgentRegistry.get_agent(Map.fetch!(attrs, :agent_id)),
+         {:ok, agent} <- get_agent(Map.fetch!(attrs, :agent_id)),
          :ok <- require_same_tenant(agent, Map.fetch!(attrs, :tenant_id)),
          {:ok, latest_version} <- latest_config_version(agent.tenant_id) do
       warnings =
@@ -160,10 +165,78 @@ defmodule TelemetryFabricControl.ControlService do
   end
 
   defp latest_config_version(tenant_id) do
-    case PipelineStore.get_pipeline(tenant_id, "default") do
+    case get_pipeline(tenant_id, "default") do
       {:ok, pipeline} -> {:ok, pipeline.version}
       {:error, :not_found} -> {:ok, 0}
       error -> error
+    end
+  end
+
+  defp register_agent_record(attrs) do
+    if postgres_primary?() do
+      PostgresControlStore.register_agent(attrs)
+    else
+      AgentRegistry.register(attrs)
+    end
+  end
+
+  defp heartbeat_agent(attrs) do
+    if postgres_primary?() do
+      PostgresControlStore.heartbeat(attrs)
+    else
+      AgentRegistry.heartbeat(attrs)
+    end
+  end
+
+  defp get_agent(agent_id) do
+    if postgres_primary?() do
+      PostgresControlStore.get_agent(agent_id)
+    else
+      AgentRegistry.get_agent(agent_id)
+    end
+  end
+
+  defp drain_commands(agent_id) do
+    if postgres_primary?() do
+      PostgresControlStore.drain_commands(agent_id)
+    else
+      {:ok, CommandQueue.drain(agent_id)}
+    end
+  end
+
+  defp get_pipeline(tenant_id, name) do
+    if postgres_primary?() do
+      PostgresControlStore.get_pipeline(tenant_id, name)
+    else
+      PipelineStore.get_pipeline(tenant_id, name)
+    end
+  end
+
+  defp put_pipeline_config(config, actor) do
+    if postgres_primary?() do
+      PostgresControlStore.put_pipeline(config, actor)
+    else
+      PipelineStore.put_pipeline(config, actor)
+    end
+  end
+
+  defp rollback_pipeline_config(tenant_id, name, target_version, actor) do
+    if postgres_primary?() do
+      PostgresControlStore.rollback_pipeline(tenant_id, name, target_version, actor)
+    else
+      PipelineStore.rollback_pipeline(tenant_id, name, target_version, actor)
+    end
+  end
+
+  defp postgres_primary? do
+    System.get_env("TELEMETRY_FABRIC_CONTROL_STORAGE") == "postgres" or
+      truthy_env?("TELEMETRY_FABRIC_CONTROL_POSTGRES_PRIMARY")
+  end
+
+  defp truthy_env?(name) do
+    case System.get_env(name) do
+      nil -> false
+      value -> String.downcase(value) in ["1", "true", "on", "yes"]
     end
   end
 

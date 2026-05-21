@@ -17,6 +17,8 @@ defmodule TelemetryFabricControl.HttpControlServer do
   alias TelemetryFabricControl.Json
 
   @read_timeout 5_000
+  @max_header_bytes 16 * 1024
+  @default_max_body_bytes 1 * 1024 * 1024
 
   def start_link(opts) do
     name = Keyword.get(opts, :name, __MODULE__)
@@ -32,20 +34,26 @@ defmodule TelemetryFabricControl.HttpControlServer do
     host = Keyword.get(opts, :host, "127.0.0.1")
     port = Keyword.get(opts, :port, 4001)
     ip = parse_ip!(host)
+    security = security_options(opts)
+    max_body_bytes = Keyword.get(opts, :max_body_bytes, @default_max_body_bytes)
 
-    {:ok, socket} =
-      :gen_tcp.listen(port, [
-        :binary,
-        active: false,
-        packet: :raw,
-        reuseaddr: true,
-        ip: ip
-      ])
+    {:ok, transport, socket} = listen(port, ip, security)
 
-    {:ok, actual_port} = :inet.port(socket)
-    {:ok, acceptor} = Task.start_link(fn -> accept_loop(socket) end)
+    {:ok, actual_port} = bound_port(transport, socket)
 
-    {:ok, %{socket: socket, acceptor: acceptor, host: host, port: actual_port}}
+    {:ok, acceptor} =
+      Task.start_link(fn -> accept_loop(socket, transport, security, max_body_bytes) end)
+
+    {:ok,
+     %{
+       socket: socket,
+       transport: transport,
+       acceptor: acceptor,
+       host: host,
+       port: actual_port,
+       security: security,
+       max_body_bytes: max_body_bytes
+     }}
   end
 
   @impl true
@@ -55,77 +63,82 @@ defmodule TelemetryFabricControl.HttpControlServer do
 
   @impl true
   def terminate(_reason, state) do
-    :gen_tcp.close(state.socket)
+    close(state.transport, state.socket)
     :ok
   end
 
-  defp accept_loop(socket) do
-    case :gen_tcp.accept(socket) do
+  defp accept_loop(socket, transport, security, max_body_bytes) do
+    case accept(transport, socket) do
       {:ok, client} ->
-        Task.start(fn -> handle_client(client) end)
-        accept_loop(socket)
+        Task.start(fn -> handle_client(transport, client, security, max_body_bytes) end)
+        accept_loop(socket, transport, security, max_body_bytes)
 
       {:error, :closed} ->
         :ok
 
       {:error, _reason} ->
-        accept_loop(socket)
+        accept_loop(socket, transport, security, max_body_bytes)
     end
   end
 
-  defp handle_client(socket) do
+  defp handle_client(transport, socket, security, max_body_bytes) do
     response =
       socket
-      |> read_request()
-      |> route_request()
+      |> read_request(transport, max_body_bytes)
+      |> route_request(security)
 
-    :ok = :gen_tcp.send(socket, response)
-    :gen_tcp.close(socket)
+    :ok = send_data(transport, socket, response)
+    close(transport, socket)
   rescue
     error in [ArgumentError, KeyError] ->
       body = %{error: Exception.message(error)}
-      _ = :gen_tcp.send(socket, response(400, body))
-      :gen_tcp.close(socket)
+      _ = send_data(transport, socket, response(400, body))
+      close(transport, socket)
 
     error ->
       body = %{error: Exception.message(error)}
-      _ = :gen_tcp.send(socket, response(500, body))
-      :gen_tcp.close(socket)
+      _ = send_data(transport, socket, response(500, body))
+      close(transport, socket)
   end
 
-  defp read_request(socket) do
-    {head, body} = read_until_headers(socket, "")
+  defp read_request(socket, transport, max_body_bytes) do
+    {head, body} = read_until_headers(socket, transport, "")
     [request_line | header_lines] = String.split(head, "\r\n")
     [method, path, _version] = String.split(request_line, " ", parts: 3)
     headers = parse_headers(header_lines)
     content_length = headers |> Map.get("content-length", "0") |> String.to_integer()
-    body = read_body(socket, body, content_length)
+    if content_length > max_body_bytes, do: raise("request body exceeds maximum size")
+    body = read_body(socket, transport, body, content_length)
 
     %{method: method, path: path, headers: headers, body: body}
   end
 
-  defp read_until_headers(socket, acc) do
+  defp read_until_headers(socket, transport, acc) do
     case String.split(acc, "\r\n\r\n", parts: 2) do
       [head, body] ->
+        if byte_size(head) > @max_header_bytes, do: raise("request headers exceed maximum size")
         {head, body}
 
       [_] ->
-        case :gen_tcp.recv(socket, 0, @read_timeout) do
-          {:ok, chunk} -> read_until_headers(socket, acc <> chunk)
+        if byte_size(acc) > @max_header_bytes, do: raise("request headers exceed maximum size")
+
+        case recv(transport, socket, 0, @read_timeout) do
+          {:ok, chunk} -> read_until_headers(socket, transport, acc <> chunk)
           {:error, reason} -> raise "failed to read HTTP request: #{inspect(reason)}"
         end
     end
   end
 
-  defp read_body(_socket, body, content_length) when byte_size(body) >= content_length do
+  defp read_body(_socket, _transport, body, content_length)
+       when byte_size(body) >= content_length do
     binary_part(body, 0, content_length)
   end
 
-  defp read_body(socket, body, content_length) do
+  defp read_body(socket, transport, body, content_length) do
     remaining = content_length - byte_size(body)
 
-    case :gen_tcp.recv(socket, remaining, @read_timeout) do
-      {:ok, chunk} -> read_body(socket, body <> chunk, content_length)
+    case recv(transport, socket, remaining, @read_timeout) do
+      {:ok, chunk} -> read_body(socket, transport, body <> chunk, content_length)
       {:error, reason} -> raise "failed to read HTTP body: #{inspect(reason)}"
     end
   end
@@ -139,11 +152,19 @@ defmodule TelemetryFabricControl.HttpControlServer do
     end)
   end
 
-  defp route_request(%{method: "GET", path: path}) when path in ["/healthz", "/readyz"] do
+  defp route_request(request, security) do
+    case authorize(request, security) do
+      :ok -> route_authorized_request(request)
+      {:error, status, body} -> response(status, body)
+    end
+  end
+
+  defp route_authorized_request(%{method: "GET", path: path})
+       when path in ["/healthz", "/readyz"] do
     response(200, %{status: "ok"})
   end
 
-  defp route_request(%{method: "POST", path: "/v1/agents/register", body: body}) do
+  defp route_authorized_request(%{method: "POST", path: "/v1/agents/register", body: body}) do
     body
     |> decode_request()
     |> ControlService.register_agent()
@@ -153,7 +174,7 @@ defmodule TelemetryFabricControl.HttpControlServer do
     end
   end
 
-  defp route_request(%{method: "POST", path: "/v1/agents/heartbeat", body: body}) do
+  defp route_authorized_request(%{method: "POST", path: "/v1/agents/heartbeat", body: body}) do
     body
     |> decode_request()
     |> ControlService.heartbeat()
@@ -163,7 +184,7 @@ defmodule TelemetryFabricControl.HttpControlServer do
     end
   end
 
-  defp route_request(%{method: "POST", path: "/v1/agents/config", body: body}) do
+  defp route_authorized_request(%{method: "POST", path: "/v1/agents/config", body: body}) do
     body
     |> decode_request()
     |> ControlService.config_update()
@@ -174,7 +195,7 @@ defmodule TelemetryFabricControl.HttpControlServer do
     end
   end
 
-  defp route_request(%{method: "POST", path: "/v1/agents/status", body: body}) do
+  defp route_authorized_request(%{method: "POST", path: "/v1/agents/status", body: body}) do
     body
     |> decode_request()
     |> ControlService.report_status()
@@ -184,7 +205,7 @@ defmodule TelemetryFabricControl.HttpControlServer do
     end
   end
 
-  defp route_request(%{method: "POST", path: "/v1/agents/commands", body: body}) do
+  defp route_authorized_request(%{method: "POST", path: "/v1/agents/commands", body: body}) do
     attrs = decode_request(body)
     kind = attrs |> Map.get(:kind) |> parse_command_kind()
 
@@ -197,7 +218,7 @@ defmodule TelemetryFabricControl.HttpControlServer do
     end
   end
 
-  defp route_request(%{method: "POST", path: "/v1/pipelines", body: body}) do
+  defp route_authorized_request(%{method: "POST", path: "/v1/pipelines", body: body}) do
     body
     |> decode_request()
     |> ControlService.put_pipeline()
@@ -207,7 +228,7 @@ defmodule TelemetryFabricControl.HttpControlServer do
     end
   end
 
-  defp route_request(%{method: "POST", path: "/v1/pipelines/rollback", body: body}) do
+  defp route_authorized_request(%{method: "POST", path: "/v1/pipelines/rollback", body: body}) do
     body
     |> decode_request()
     |> ControlService.rollback_pipeline()
@@ -217,7 +238,67 @@ defmodule TelemetryFabricControl.HttpControlServer do
     end
   end
 
-  defp route_request(_request), do: response(404, %{error: "not_found"})
+  defp route_authorized_request(_request), do: response(404, %{error: "not_found"})
+
+  defp authorize(%{method: "GET", path: path}, _security) when path in ["/healthz", "/readyz"],
+    do: :ok
+
+  defp authorize(%{path: path} = request, security) do
+    role =
+      if path in ["/v1/agents/commands", "/v1/pipelines", "/v1/pipelines/rollback"] do
+        :operator
+      else
+        :agent
+      end
+
+    authorize_role(request, security, role)
+  end
+
+  defp authorize_role(request, security, :agent) do
+    token = bearer_token(request.headers)
+
+    cond do
+      token_matches?(token, security.operator_token) -> :ok
+      token_matches?(token, security.agent_token) -> :ok
+      security.agent_token == nil and security.operator_token == nil -> :ok
+      token == nil -> {:error, 401, %{error: "missing_bearer_token"}}
+      true -> {:error, 403, %{error: "invalid_bearer_token"}}
+    end
+  end
+
+  defp authorize_role(request, security, :operator) do
+    token = bearer_token(request.headers)
+
+    cond do
+      token_matches?(token, security.operator_token) -> :ok
+      security.operator_token == nil and security.agent_token == nil -> :ok
+      security.operator_token == nil -> {:error, 403, %{error: "operator_token_not_configured"}}
+      token == nil -> {:error, 401, %{error: "missing_bearer_token"}}
+      true -> {:error, 403, %{error: "invalid_bearer_token"}}
+    end
+  end
+
+  defp bearer_token(headers) do
+    case Map.get(headers, "authorization") do
+      "Bearer " <> token -> String.trim(token)
+      _ -> nil
+    end
+  end
+
+  defp token_matches?(nil, _expected), do: false
+  defp token_matches?(_token, nil), do: false
+
+  defp token_matches?(token, expected) do
+    byte_size(token) == byte_size(expected) and constant_time_equal?(token, expected)
+  end
+
+  defp constant_time_equal?(left, right) do
+    left
+    |> :binary.bin_to_list()
+    |> Enum.zip(:binary.bin_to_list(right))
+    |> Enum.reduce(0, fn {a, b}, acc -> Bitwise.bor(acc, Bitwise.bxor(a, b)) end)
+    |> Kernel.==(0)
+  end
 
   defp decode_request(""), do: %{}
 
@@ -356,10 +437,107 @@ defmodule TelemetryFabricControl.HttpControlServer do
 
   defp reason(200), do: "OK"
   defp reason(400), do: "Bad Request"
+  defp reason(401), do: "Unauthorized"
   defp reason(403), do: "Forbidden"
   defp reason(404), do: "Not Found"
   defp reason(500), do: "Internal Server Error"
   defp reason(_), do: "OK"
+
+  defp security_options(opts) do
+    %{
+      agent_token: blank_to_nil(Keyword.get(opts, :agent_token)),
+      operator_token: blank_to_nil(Keyword.get(opts, :operator_token)),
+      tls_enabled: Keyword.get(opts, :tls_enabled, false),
+      tls_cert_file: blank_to_nil(Keyword.get(opts, :tls_cert_file)),
+      tls_key_file: blank_to_nil(Keyword.get(opts, :tls_key_file)),
+      tls_ca_file: blank_to_nil(Keyword.get(opts, :tls_ca_file)),
+      tls_require_client_auth: Keyword.get(opts, :tls_require_client_auth, false)
+    }
+  end
+
+  defp blank_to_nil(value) when value in [nil, ""], do: nil
+  defp blank_to_nil(value), do: value
+
+  defp listen(port, ip, %{tls_enabled: true} = security) do
+    :ok = :ssl.start()
+
+    cert_file =
+      security.tls_cert_file ||
+        raise ArgumentError, "TLS control server requires tls_cert_file"
+
+    key_file =
+      security.tls_key_file ||
+        raise ArgumentError, "TLS control server requires tls_key_file"
+
+    tls_opts =
+      [
+        :binary,
+        active: false,
+        packet: :raw,
+        reuseaddr: true,
+        ip: ip,
+        certfile: cert_file,
+        keyfile: key_file
+      ]
+      |> maybe_require_client_cert(security)
+
+    case :ssl.listen(port, tls_opts) do
+      {:ok, socket} -> {:ok, :ssl, socket}
+      error -> error
+    end
+  end
+
+  defp listen(port, ip, _security) do
+    opts = [
+      :binary,
+      active: false,
+      packet: :raw,
+      reuseaddr: true,
+      ip: ip
+    ]
+
+    case :gen_tcp.listen(port, opts) do
+      {:ok, socket} -> {:ok, :gen_tcp, socket}
+      error -> error
+    end
+  end
+
+  defp maybe_require_client_cert(opts, %{tls_require_client_auth: true, tls_ca_file: ca_file})
+       when is_binary(ca_file) do
+    opts ++ [verify: :verify_peer, fail_if_no_peer_cert: true, cacertfile: ca_file]
+  end
+
+  defp maybe_require_client_cert(_opts, %{tls_require_client_auth: true}) do
+    raise ArgumentError, "mTLS control server requires tls_ca_file"
+  end
+
+  defp maybe_require_client_cert(opts, _security), do: opts
+
+  defp accept(:gen_tcp, socket), do: :gen_tcp.accept(socket)
+
+  defp accept(:ssl, socket) do
+    with {:ok, transport_socket} <- :ssl.transport_accept(socket),
+         {:ok, ssl_socket} <- :ssl.handshake(transport_socket) do
+      {:ok, ssl_socket}
+    end
+  end
+
+  defp recv(:gen_tcp, socket, length, timeout), do: :gen_tcp.recv(socket, length, timeout)
+  defp recv(:ssl, socket, length, timeout), do: :ssl.recv(socket, length, timeout)
+
+  defp send_data(:gen_tcp, socket, response), do: :gen_tcp.send(socket, response)
+  defp send_data(:ssl, socket, response), do: :ssl.send(socket, response)
+
+  defp close(:gen_tcp, socket), do: :gen_tcp.close(socket)
+  defp close(:ssl, socket), do: :ssl.close(socket)
+
+  defp bound_port(:gen_tcp, socket), do: :inet.port(socket)
+
+  defp bound_port(:ssl, socket) do
+    with {:ok, {_address, port}} <- :ssl.sockname(socket) do
+      {:ok, port}
+    end
+  end
 
   defp parse_ip!(host) do
     host
