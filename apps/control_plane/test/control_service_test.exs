@@ -149,6 +149,13 @@ defmodule TelemetryFabricControl.ControlServiceTest do
              %ControlCommand{kind: :pause_exports, status: :delivered, delivered_at: %DateTime{}},
              %ControlCommand{kind: :resume_exports, status: :delivered, delivered_at: %DateTime{}}
            ] = CommandQueue.list_all()
+
+    audit_actions =
+      AuditLog.list(:all)
+      |> Enum.map(& &1.action)
+
+    assert Enum.count(audit_actions, &(&1 == "command.enqueued")) == 2
+    assert Enum.count(audit_actions, &(&1 == "command.delivered")) == 2
   end
 
   test "command queue persists pending commands across process restarts" do

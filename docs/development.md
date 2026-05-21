@@ -179,6 +179,7 @@ Supported command kinds are `reload_config`, `pause_exports`,
 Operator commands are durable until an agent heartbeat receives them. Delivery
 marks the stored command as `delivered` with a `delivered_at` timestamp, and the
 PostgreSQL snapshot sync preserves both pending and delivered commands.
+Command enqueue and delivery both append audit events.
 
 Example registration request:
 

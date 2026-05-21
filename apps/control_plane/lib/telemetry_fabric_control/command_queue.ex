@@ -5,7 +5,8 @@ defmodule TelemetryFabricControl.CommandQueue do
   Heartbeat-derived commands such as `reload_config` can be returned directly by
   `ControlService`; this queue is for commands that must survive process
   restarts until an agent heartbeat drains them. Drained commands are retained
-  as delivered history so PostgreSQL snapshots can record the full lifecycle.
+  as delivered history and audit events are emitted for enqueue/delivery so
+  PostgreSQL snapshots can record the full lifecycle.
   """
 
   use GenServer
@@ -60,8 +61,9 @@ defmodule TelemetryFabricControl.CommandQueue do
   @impl true
   def init(opts) do
     storage_path = Keyword.get(opts, :storage_path)
+    audit_log = Keyword.get(opts, :audit_log, TelemetryFabricControl.AuditLog)
     commands = TelemetryFabricControl.StateFile.load(storage_path, %{})
-    {:ok, %{commands: commands, storage_path: storage_path}}
+    {:ok, %{commands: commands, storage_path: storage_path, audit_log: audit_log}}
   end
 
   @impl true
@@ -72,6 +74,7 @@ defmodule TelemetryFabricControl.CommandQueue do
       end)
 
     persist!(state, commands)
+    audit_command(state, command, "command.enqueued", "operator")
     {:reply, {:ok, command}, %{state | commands: commands}}
   end
 
@@ -97,6 +100,7 @@ defmodule TelemetryFabricControl.CommandQueue do
       end
 
     persist!(state, commands)
+    Enum.each(pending, &audit_command(state, &1, "command.delivered", agent_id))
     {:reply, pending, %{state | commands: commands}}
   end
 
@@ -128,5 +132,19 @@ defmodule TelemetryFabricControl.CommandQueue do
 
   defp persist!(state, commands) do
     TelemetryFabricControl.StateFile.persist(state.storage_path, commands)
+  end
+
+  defp audit_command(state, %ControlCommand{} = command, action, actor) do
+    TelemetryFabricControl.AuditLog.append(state.audit_log, %{
+      actor: actor,
+      action: action,
+      resource: command.command_id,
+      metadata: %{
+        agent_id: command.agent_id,
+        tenant_id: command.tenant_id,
+        kind: command.kind,
+        reason: command.reason
+      }
+    })
   end
 end

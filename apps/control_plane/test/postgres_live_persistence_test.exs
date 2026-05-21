@@ -58,7 +58,7 @@ defmodule TelemetryFabricControl.PostgresLivePersistenceTest do
       assert :ok = PostgresMigrator.migrate(LiveRepo)
 
       assert {:ok, _changes} =
-               PostgresSync.sync_once(repo: LiveRepo, snapshot: delivered_snapshot)
+               PostgresSync.sync_once(repo: LiveRepo, snapshot: snapshot)
 
       assert count!("tenants", "tenant_id = $1", ["payments-prod"]) == 1
       assert count!("agents", "agent_id = $1", ["agent-1"]) == 1
@@ -92,7 +92,11 @@ defmodule TelemetryFabricControl.PostgresLivePersistenceTest do
                "agent-1"
              ]) == true
 
-      assert {:ok, _changes} = PostgresSync.sync_once(repo: LiveRepo, snapshot: snapshot)
+      assert count!("audit_events", "action = $1", ["command.enqueued"]) == 1
+      assert count!("audit_events", "action = $1", ["command.delivered"]) == 1
+
+      assert {:ok, _changes} =
+               PostgresSync.sync_once(repo: LiveRepo, snapshot: delivered_snapshot)
 
       assert count!("audit_events", "resource IN ($1, $2)", ["payments-prod/default", "agent-1"]) ==
                audit_count

@@ -9,7 +9,8 @@ Implemented or represented:
 
 - Explicit tenant IDs on all telemetry records.
 - Pipeline validation before runtime use.
-- Audit events for agent registration and pipeline changes.
+- Audit events for agent registration, pipeline changes, and operator command
+  delivery.
 - No inline secret model in the protocol definitions.
 - OTLP/HTTP exporter TLS for `https://` endpoints, with custom CA and optional
   client certificates.

@@ -113,6 +113,9 @@ defmodule TelemetryFabricControl.PostgresPersistenceTest do
                delivered_at: %DateTime{}
              }
            ] = rows.agent_commands
+
+    assert Enum.any?(rows.audit_events, &(&1.action == "command.enqueued"))
+    assert Enum.any?(rows.audit_events, &(&1.action == "command.delivered"))
   end
 
   test "postgres writer builds deterministic ecto multi operations" do
