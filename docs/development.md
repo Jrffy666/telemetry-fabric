@@ -162,6 +162,7 @@ Available HTTP endpoints:
 - `POST /v1/agents/config`
 - `POST /v1/agents/status`
 - `POST /v1/agents/commands`
+- `POST /v1/pipelines/rollback`
 
 Queue an operator command:
 
@@ -180,6 +181,20 @@ Operator commands are durable until an agent heartbeat receives them. Delivery
 marks the stored command as `delivered` with a `delivered_at` timestamp, and the
 PostgreSQL snapshot sync preserves both pending and delivered commands.
 Command enqueue and delivery both append audit events.
+
+Rollback a pipeline by creating a new latest version from an older version:
+
+```json
+{
+  "tenant_id": "payments-prod",
+  "pipeline": "default",
+  "target_version": 1,
+  "actor": "operator"
+}
+```
+
+Agents learn about the rollback through the normal heartbeat and config update
+workflow because rollback creates a higher config version.
 
 Example registration request:
 

@@ -24,6 +24,37 @@ defmodule TelemetryFabricControl.PipelineStoreTest do
     assert latest.version == 2
   end
 
+  test "rolls back pipeline configs by creating a new latest version" do
+    first_config = SamplePipeline.build("payments-prod")
+    second_config = %{first_config | processors: [%{name: "redact", enabled: true}]}
+
+    assert {:ok, first} = PipelineStore.put_pipeline(first_config, "test")
+    assert {:ok, second} = PipelineStore.put_pipeline(second_config, "test")
+
+    assert {:ok, rollback} =
+             PipelineStore.rollback_pipeline(
+               "payments-prod",
+               "default",
+               first.version,
+               "operator"
+             )
+
+    assert second.version == 2
+    assert rollback.version == 3
+    assert rollback.processors == first.processors
+
+    assert {:ok, latest} = PipelineStore.get_pipeline("payments-prod", "default")
+    assert latest.version == 3
+
+    assert [
+             %TelemetryFabricControl.AuditLog{
+               action: "pipeline.rolled_back",
+               metadata: %{version: 3, target_version: 1}
+             }
+             | _
+           ] = TelemetryFabricControl.AuditLog.list(:all)
+  end
+
   test "persists pipeline versions across process restarts" do
     dir = tmp_dir("pipeline-store")
     path = Path.join(dir, "pipelines.term")

@@ -197,6 +197,16 @@ defmodule TelemetryFabricControl.HttpControlServer do
     end
   end
 
+  defp route_request(%{method: "POST", path: "/v1/pipelines/rollback", body: body}) do
+    body
+    |> decode_request()
+    |> ControlService.rollback_pipeline()
+    |> case do
+      {:ok, pipeline} -> response(200, %{pipeline: encode_pipeline(pipeline)})
+      error -> error_response(error)
+    end
+  end
+
   defp route_request(_request), do: response(404, %{error: "not_found"})
 
   defp decode_request(""), do: %{}
@@ -233,6 +243,8 @@ defmodule TelemetryFabricControl.HttpControlServer do
       "queue_depth_bytes" -> :queue_depth_bytes
       "ingest_bytes_per_second" -> :ingest_bytes_per_second
       "pipeline" -> :pipeline
+      "target_version" -> :target_version
+      "actor" -> :actor
       "kind" -> :kind
       "reason" -> :reason
       other -> other
@@ -293,9 +305,21 @@ defmodule TelemetryFabricControl.HttpControlServer do
   defp format_datetime(nil), do: nil
   defp format_datetime(%DateTime{} = value), do: DateTime.to_iso8601(value)
 
+  defp encode_pipeline(pipeline) do
+    %{
+      tenant_id: pipeline.tenant_id,
+      name: pipeline.name,
+      version: pipeline.version
+    }
+  end
+
   defp error_response({:error, :not_found}), do: response(404, %{error: "not_found"})
   defp error_response({:error, :tenant_mismatch}), do: response(403, %{error: "tenant_mismatch"})
   defp error_response({:error, {:empty, field}}), do: response(400, %{error: "empty_#{field}"})
+
+  defp error_response({:error, {:invalid_integer, field, value}}) do
+    response(400, %{error: "invalid_integer", field: field, value: value})
+  end
 
   defp error_response({:error, {:unknown_command_kind, kind}}) do
     response(400, %{error: "unknown_command_kind", kind: kind})

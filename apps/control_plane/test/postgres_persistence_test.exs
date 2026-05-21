@@ -118,6 +118,33 @@ defmodule TelemetryFabricControl.PostgresPersistenceTest do
     assert Enum.any?(rows.audit_events, &(&1.action == "command.delivered"))
   end
 
+  test "rolled back pipeline versions convert to postgres row maps" do
+    first_config = SamplePipeline.build("payments-prod")
+    second_config = %{first_config | processors: [%{name: "redact", enabled: true}]}
+
+    assert {:ok, first} = PipelineStore.put_pipeline(first_config, "operator")
+    assert {:ok, _second} = PipelineStore.put_pipeline(second_config, "operator")
+
+    assert {:ok, rollback} =
+             PipelineStore.rollback_pipeline(
+               "payments-prod",
+               "default",
+               first.version,
+               "operator"
+             )
+
+    snapshot = ControlStateSnapshot.collect()
+    rows = PostgresCodec.snapshot_rows(snapshot)
+
+    assert Enum.map(rows.pipeline_versions, & &1.version) == [1, 2, 3]
+
+    assert [%{version: 3, checksum: checksum}] =
+             Enum.filter(rows.pipeline_versions, &(&1.version == rollback.version))
+
+    assert byte_size(checksum) == 64
+    assert Enum.any?(rows.audit_events, &(&1.action == "pipeline.rolled_back"))
+  end
+
   test "postgres writer builds deterministic ecto multi operations" do
     SamplePipeline.build("payments-prod")
     |> PipelineStore.put_pipeline("operator")

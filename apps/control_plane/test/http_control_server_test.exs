@@ -57,6 +57,30 @@ defmodule TelemetryFabricControl.HttpControlServerTest do
     assert current_config_body["update"] == nil
   end
 
+  test "serves pipeline rollback workflow", %{port: port} do
+    first_config = SamplePipeline.build("payments-prod")
+    second_config = %{first_config | processors: [%{name: "redact", enabled: true}]}
+
+    assert {:ok, first} = PipelineStore.put_pipeline(first_config, "test")
+    assert {:ok, _second} = PipelineStore.put_pipeline(second_config, "test")
+
+    assert {200, rollback_body} =
+             post_json(port, "/v1/pipelines/rollback", %{
+               tenant_id: "payments-prod",
+               pipeline: "default",
+               target_version: first.version,
+               actor: "operator"
+             })
+
+    assert rollback_body["pipeline"]["tenant_id"] == "payments-prod"
+    assert rollback_body["pipeline"]["name"] == "default"
+    assert rollback_body["pipeline"]["version"] == 3
+
+    assert {:ok, latest} = PipelineStore.get_pipeline("payments-prod", "default")
+    assert latest.version == 3
+    assert latest.processors == first.processors
+  end
+
   test "serves heartbeat-derived and operator-queued commands", %{port: port} do
     "payments-prod"
     |> SamplePipeline.build()
@@ -141,6 +165,15 @@ defmodule TelemetryFabricControl.HttpControlServerTest do
              raw_request(port, "POST /v1/agents/register HTTP/1.1\r\nContent-Length: 1\r\n\r\n{")
 
     assert body["error"] =~ "invalid JSON request body"
+
+    assert {400, body} =
+             post_json(port, "/v1/pipelines/rollback", %{
+               tenant_id: "payments-prod",
+               pipeline: "default",
+               target_version: 0
+             })
+
+    assert body["error"] == "invalid_integer"
   end
 
   test "serves health checks", %{port: port} do

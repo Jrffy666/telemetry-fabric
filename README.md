@@ -33,6 +33,8 @@ This repository currently contains:
 - PostgreSQL schema, state-to-row codec, Ecto schemas, Repo wiring, migration
   task, and periodic snapshot sync for the next control-plane persistence
   adapter.
+- Versioned pipeline rollback that creates a new latest config version and
+  preserves rollback audit history.
 - Protobuf contracts for future agent-control and pipeline APIs.
 - Deployment and operations scaffolding.
 

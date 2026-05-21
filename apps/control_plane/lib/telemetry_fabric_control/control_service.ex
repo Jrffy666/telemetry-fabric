@@ -106,6 +106,20 @@ defmodule TelemetryFabricControl.ControlService do
     end
   end
 
+  def rollback_pipeline(attrs) when is_map(attrs) do
+    with :ok <- require_text(:tenant_id, Map.get(attrs, :tenant_id)),
+         :ok <- require_text(:pipeline, pipeline_name(attrs)),
+         {:ok, target_version} <-
+           require_positive_integer(:target_version, Map.get(attrs, :target_version)) do
+      PipelineStore.rollback_pipeline(
+        Map.fetch!(attrs, :tenant_id),
+        pipeline_name(attrs),
+        target_version,
+        Map.get(attrs, :actor, "operator")
+      )
+    end
+  end
+
   def report_status(attrs) when is_map(attrs) do
     with :ok <- require_text(:agent_id, Map.get(attrs, :agent_id)),
          :ok <- require_text(:tenant_id, Map.get(attrs, :tenant_id)),
@@ -164,6 +178,11 @@ defmodule TelemetryFabricControl.ControlService do
   end
 
   defp require_text(field, _value), do: {:error, {:empty, field}}
+
+  defp require_positive_integer(_field, value) when is_integer(value) and value > 0,
+    do: {:ok, value}
+
+  defp require_positive_integer(field, value), do: {:error, {:invalid_integer, field, value}}
 
   defp register_message(0), do: "agent registered; no pipeline config is available"
   defp register_message(_version), do: "agent registered"

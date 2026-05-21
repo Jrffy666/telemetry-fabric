@@ -31,6 +31,14 @@ defmodule TelemetryFabricControl.PipelineStore do
     GenServer.call(server, {:get_pipeline, tenant_id, name})
   end
 
+  def rollback_pipeline(tenant_id, name, target_version, actor \\ "system") do
+    rollback_pipeline(__MODULE__, tenant_id, name, target_version, actor)
+  end
+
+  def rollback_pipeline(server, tenant_id, name, target_version, actor) do
+    GenServer.call(server, {:rollback_pipeline, tenant_id, name, target_version, actor})
+  end
+
   def list_pipelines(tenant_id) do
     list_pipelines(__MODULE__, tenant_id)
   end
@@ -85,6 +93,30 @@ defmodule TelemetryFabricControl.PipelineStore do
     end
   end
 
+  def handle_call({:rollback_pipeline, tenant_id, name, target_version, actor}, _from, state) do
+    key = {tenant_id, name}
+    versions = Map.get(state.pipelines, key, [])
+
+    with {:ok, target} <- find_version(versions, target_version),
+         :ok <- PipelineConfig.validate(target) do
+      next_version = next_version(versions)
+      rolled_back = %{target | version: next_version}
+
+      TelemetryFabricControl.AuditLog.append(%{
+        actor: actor,
+        action: "pipeline.rolled_back",
+        resource: "#{tenant_id}/#{name}",
+        metadata: %{version: next_version, target_version: target_version}
+      })
+
+      pipelines = Map.put(state.pipelines, key, [rolled_back | versions])
+      persist!(state, pipelines)
+      {:reply, {:ok, rolled_back}, %{state | pipelines: pipelines}}
+    else
+      error -> {:reply, error, state}
+    end
+  end
+
   def handle_call({:get_pipeline, tenant_id, name}, _from, state) do
     result =
       case Map.get(state.pipelines, {tenant_id, name}, []) do
@@ -122,6 +154,16 @@ defmodule TelemetryFabricControl.PipelineStore do
 
   defp next_version([]), do: 1
   defp next_version([latest | _]), do: latest.version + 1
+
+  defp find_version(_versions, target_version) when not is_integer(target_version),
+    do: {:error, {:invalid_version, target_version}}
+
+  defp find_version(versions, target_version) do
+    case Enum.find(versions, &(&1.version == target_version)) do
+      nil -> {:error, :not_found}
+      pipeline -> {:ok, pipeline}
+    end
+  end
 
   defp persist!(state, pipelines) do
     TelemetryFabricControl.StateFile.persist(state.storage_path, pipelines)

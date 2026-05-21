@@ -104,6 +104,51 @@ defmodule TelemetryFabricControl.ControlServiceTest do
              })
   end
 
+  test "rolls back pipeline configs and exposes the rollback as a new update" do
+    first_config = SamplePipeline.build("payments-prod")
+    second_config = %{first_config | processors: [%{name: "redact", enabled: true}]}
+
+    assert {:ok, first} = PipelineStore.put_pipeline(first_config, "test")
+    assert {:ok, _second} = PipelineStore.put_pipeline(second_config, "test")
+
+    assert {:ok, %RegisterAgentResponse{config_version: 2}} =
+             ControlService.register_agent(%{
+               agent_id: "agent-1",
+               tenant_id: "payments-prod",
+               hostname: "node-a",
+               version: "0.1.0"
+             })
+
+    assert {:ok, rollback} =
+             ControlService.rollback_pipeline(%{
+               tenant_id: "payments-prod",
+               pipeline: "default",
+               target_version: first.version,
+               actor: "operator"
+             })
+
+    assert rollback.version == 3
+    assert rollback.processors == first.processors
+
+    assert {:ok, %ConfigUpdate{version: 3, pipeline_config: payload}} =
+             ControlService.config_update(%{
+               agent_id: "agent-1",
+               tenant_id: "payments-prod",
+               current_version: 2
+             })
+
+    assert payload =~ "memory-limiter"
+
+    assert {:ok, [%ControlCommand{kind: :reload_config, reason: reason}]} =
+             ControlService.heartbeat(%{
+               agent_id: "agent-1",
+               tenant_id: "payments-prod",
+               config_version: 2
+             })
+
+    assert reason =~ "version 3"
+  end
+
   test "heartbeat drains queued operator commands" do
     "payments-prod"
     |> SamplePipeline.build()
