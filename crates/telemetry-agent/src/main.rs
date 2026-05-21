@@ -88,6 +88,7 @@ async fn run() -> Result<(), DynError> {
             client,
             Duration::from_millis(args.control_heartbeat_interval_ms),
             queue_health,
+            args.flush_batch_size,
         );
     }
 
@@ -207,6 +208,7 @@ fn spawn_control_worker(
     client: ControlClient,
     heartbeat_interval: Duration,
     initial_health: Option<RuntimeHealth>,
+    drain_batch_size: usize,
 ) {
     tokio::spawn(async move {
         let mut applied_config_version = 0_u64;
@@ -288,13 +290,29 @@ fn spawn_control_worker(
                     }
                     ControlCommandKind::DrainAndRestart => {
                         println!(
-                            "control command received but not implemented yet: drain_and_restart id={} reason={}",
+                            "control command received: drain_and_restart id={} reason={}",
+                            command.command_id, command.reason
+                        );
+                        if let Err(err) =
+                            drain_and_exit(&runtime, drain_batch_size, &command.command_id).await
+                        {
+                            eprintln!(
+                                "control drain_and_restart failed: id={} error={err}",
+                                command.command_id
+                            );
+                        }
+                    }
+                    ControlCommandKind::PauseExports => {
+                        runtime.lock().await.pause_exports();
+                        println!(
+                            "control exports paused: id={} reason={}",
                             command.command_id, command.reason
                         );
                     }
-                    ControlCommandKind::PauseExports => {
+                    ControlCommandKind::ResumeExports => {
+                        runtime.lock().await.resume_exports();
                         println!(
-                            "control command received but not implemented yet: pause_exports id={} reason={}",
+                            "control exports resumed: id={} reason={}",
                             command.command_id, command.reason
                         );
                     }
@@ -308,6 +326,31 @@ fn spawn_control_worker(
             }
         }
     });
+}
+
+async fn drain_and_exit(
+    runtime: &Arc<Mutex<AgentRuntime>>,
+    batch_size: usize,
+    command_id: &str,
+) -> Result<(), DynError> {
+    loop {
+        let report = runtime.lock().await.flush_for_shutdown(batch_size).await?;
+        if report.drained_records == 0 {
+            println!("control drain completed: id={command_id}; exiting for supervisor restart");
+            std::process::exit(0);
+        }
+
+        println!(
+            "control drain progress: id={} drained={} exported={} dropped={} bytes={}",
+            command_id,
+            report.drained_records,
+            report.exported_records,
+            report.dropped_records,
+            report.exported_bytes
+        );
+
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
 }
 
 async fn fetch_and_apply_config(
@@ -387,8 +430,11 @@ async fn handle_health(
                 "200 OK",
                 "application/json",
                 format!(
-                    "{{\"status\":\"ok\",\"queued_bytes\":{},\"cursor_segment_id\":{},\"cursor_offset\":{}}}",
-                    health.queued_bytes, health.cursor_segment_id, health.cursor_offset
+                    "{{\"status\":\"ok\",\"queued_bytes\":{},\"cursor_segment_id\":{},\"cursor_offset\":{},\"exports_paused\":{}}}",
+                    health.queued_bytes,
+                    health.cursor_segment_id,
+                    health.cursor_offset,
+                    health.exports_paused
                 ),
             ),
             Err(err) => (

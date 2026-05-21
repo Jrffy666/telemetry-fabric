@@ -43,6 +43,7 @@ pub enum ControlCommandKind {
     ReloadConfig,
     DrainAndRestart,
     PauseExports,
+    ResumeExports,
     Unknown,
 }
 
@@ -260,6 +261,7 @@ fn parse_command_kind(value: &str) -> ControlCommandKind {
         "reload_config" => ControlCommandKind::ReloadConfig,
         "drain_and_restart" => ControlCommandKind::DrainAndRestart,
         "pause_exports" => ControlCommandKind::PauseExports,
+        "resume_exports" => ControlCommandKind::ResumeExports,
         _ => ControlCommandKind::Unknown,
     }
 }
@@ -462,6 +464,20 @@ routes:
 
         assert_eq!(config.tenant_id, "payments-prod");
         assert_eq!(config.name, "default");
+        Ok(())
+    }
+
+    #[test]
+    fn parses_control_commands_response() -> Result<(), DynError> {
+        let response = serde_yaml::from_str(
+            r#"{"commands":[{"command_id":"cmd-1","kind":"resume_exports","reason":"done"}]}"#,
+        )?;
+
+        let commands = parse_commands_response(&response)?;
+
+        assert_eq!(commands.len(), 1);
+        assert_eq!(commands[0].kind, ControlCommandKind::ResumeExports);
+        assert_eq!(commands[0].reason, "done");
         Ok(())
     }
 

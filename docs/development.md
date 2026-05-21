@@ -109,7 +109,9 @@ The client registers once, then sends periodic heartbeats. When the control
 plane returns `reload_config`, the agent fetches `/v1/agents/config`, verifies
 the SHA-256 checksum, parses the YAML pipeline, and reloads processors,
 exporters, routes, and limits in the running runtime. Receiver sockets are not
-rebound during this MVP hot reload.
+rebound during this MVP hot reload. Operator commands can also pause exports,
+resume exports, or ask the agent to drain queued records and exit so systemd or
+Kubernetes restarts it.
 
 The control plane still runs without external services by default. PostgreSQL
 persistence now includes the plain SQL schema at
@@ -161,6 +163,23 @@ Available HTTP endpoints:
 - `POST /v1/agents/status`
 - `POST /v1/agents/commands`
 
+Queue an operator command:
+
+```json
+{
+  "agent_id": "agent-1",
+  "kind": "pause_exports",
+  "reason": "backend maintenance"
+}
+```
+
+Supported command kinds are `reload_config`, `pause_exports`,
+`resume_exports`, and `drain_and_restart`.
+
+Operator commands are durable until an agent heartbeat receives them. Delivery
+marks the stored command as `delivered` with a `delivered_at` timestamp, and the
+PostgreSQL snapshot sync preserves both pending and delivered commands.
+
 Example registration request:
 
 ```json
@@ -202,5 +221,6 @@ When `TELEMETRY_FABRIC_CONTROL_DATABASE_URL` is set, the OTP application starts
 `TelemetryFabricControl.Repo` and `TelemetryFabricControl.PostgresSync` under
 supervision. Set `TELEMETRY_FABRIC_CONTROL_POSTGRES_SYNC=false` to disable the
 sync loop, or tune `TELEMETRY_FABRIC_CONTROL_POSTGRES_SYNC_INTERVAL_MS`. The
-remaining production work is wiring the live PostgreSQL test into CI, then the
-Phoenix API and gRPC config stream.
+live PostgreSQL persistence test is wired into CI with a disposable PostgreSQL
+service. The remaining production work is the Phoenix API and gRPC config
+stream.

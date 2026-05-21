@@ -98,6 +98,26 @@ defmodule TelemetryFabricControl.HttpControlServerTest do
 
     assert [%{"kind" => "pause_exports", "reason" => "maintenance"}] = heartbeat["commands"]
 
+    assert {200, queued_resume} =
+             post_json(port, "/v1/agents/commands", %{
+               agent_id: "agent-1",
+               kind: "resume_exports",
+               reason: "maintenance complete"
+             })
+
+    assert queued_resume["command"]["kind"] == "resume_exports"
+
+    assert {200, resumed_heartbeat} =
+             post_json(port, "/v1/agents/heartbeat", %{
+               agent_id: "agent-1",
+               tenant_id: "payments-prod",
+               config_version: 1,
+               queue_depth_bytes: 0
+             })
+
+    assert [%{"kind" => "resume_exports", "reason" => "maintenance complete"}] =
+             resumed_heartbeat["commands"]
+
     assert {200, status} =
              post_json(port, "/v1/agents/status", %{
                agent_id: "agent-1",

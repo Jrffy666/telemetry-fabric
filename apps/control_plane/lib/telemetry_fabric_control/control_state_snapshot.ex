@@ -12,7 +12,7 @@ defmodule TelemetryFabricControl.ControlStateSnapshot do
   alias TelemetryFabricControl.CommandQueue
   alias TelemetryFabricControl.PipelineStore
 
-  defstruct agents: [], pipeline_versions: [], pending_commands: [], audit_events: []
+  defstruct agents: [], pipeline_versions: [], agent_commands: [], audit_events: []
 
   def collect(opts \\ []) do
     agent_registry = Keyword.get(opts, :agent_registry, AgentRegistry)
@@ -23,7 +23,7 @@ defmodule TelemetryFabricControl.ControlStateSnapshot do
     %__MODULE__{
       agents: AgentRegistry.list_agents(agent_registry),
       pipeline_versions: PipelineStore.list_versions(pipeline_store),
-      pending_commands: CommandQueue.list_all(command_queue),
+      agent_commands: CommandQueue.list_all(command_queue),
       audit_events: AuditLog.list(audit_log, :all)
     }
   end

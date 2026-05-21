@@ -246,6 +246,7 @@ defmodule TelemetryFabricControl.HttpControlServer do
       "reload_config" -> :reload_config
       "drain_and_restart" -> :drain_and_restart
       "pause_exports" -> :pause_exports
+      "resume_exports" -> :resume_exports
       _ -> kind
     end
   end
@@ -283,9 +284,14 @@ defmodule TelemetryFabricControl.HttpControlServer do
       agent_id: command.agent_id,
       tenant_id: command.tenant_id,
       kind: command.kind,
-      reason: command.reason
+      reason: command.reason,
+      status: ControlCommand.status(command),
+      delivered_at: format_datetime(ControlCommand.delivered_at(command))
     }
   end
+
+  defp format_datetime(nil), do: nil
+  defp format_datetime(%DateTime{} = value), do: DateTime.to_iso8601(value)
 
   defp error_response({:error, :not_found}), do: response(404, %{error: "not_found"})
   defp error_response({:error, :tenant_mismatch}), do: response(403, %{error: "tenant_mismatch"})

@@ -110,6 +110,19 @@ Metric routes can also target Prometheus Remote Write with
 `protocol: prometheus_remote_write`; non-metric records are ignored by that
 exporter.
 
+## Control Commands
+
+The MVP control-plane client supports these command kinds from heartbeat
+responses:
+
+- `reload_config`: fetch, checksum-verify, parse, and apply the latest YAML
+  pipeline without rebinding receiver sockets.
+- `pause_exports`: keep accepting telemetry into the durable queue while
+  skipping background exporter flushes.
+- `resume_exports`: resume normal background exporter flushes.
+- `drain_and_restart`: flush queued records until no batch remains, then exit
+  so the external supervisor restarts the process.
+
 ## Health And Metrics Endpoint
 
 `telemetry-agent` can expose a simple JSON health endpoint and Prometheus text
@@ -122,13 +135,14 @@ telemetry-agent --otlp-grpc 0.0.0.0:4317 --health-listen 0.0.0.0:13133
 `/healthz` and `/readyz` respond with:
 
 ```json
-{"status":"ok","queued_bytes":0,"cursor_segment_id":1,"cursor_offset":0}
+{"status":"ok","queued_bytes":0,"cursor_segment_id":1,"cursor_offset":0,"exports_paused":false}
 ```
 
 `/metrics` responds in Prometheus text format. Implemented metric families
 include:
 
 - `telemetry_agent_queue_bytes`
+- `telemetry_agent_exports_paused`
 - `telemetry_agent_ingested_records_total`
 - `telemetry_agent_ingest_rejected_records_total`
 - `telemetry_agent_flush_attempts_total`

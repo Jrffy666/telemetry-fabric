@@ -126,12 +126,29 @@ defmodule TelemetryFabricControl.ControlServiceTest do
                config_version: 1
              })
 
+    assert {:ok, %ControlCommand{kind: :resume_exports}} =
+             ControlService.enqueue_command("agent-1", :resume_exports, "maintenance complete")
+
+    assert {:ok, [%ControlCommand{kind: :resume_exports, reason: "maintenance complete"}]} =
+             ControlService.heartbeat(%{
+               agent_id: "agent-1",
+               tenant_id: "payments-prod",
+               config_version: 1
+             })
+
     assert {:ok, []} =
              ControlService.heartbeat(%{
                agent_id: "agent-1",
                tenant_id: "payments-prod",
                config_version: 1
              })
+
+    assert [] = CommandQueue.list("agent-1")
+
+    assert [
+             %ControlCommand{kind: :pause_exports, status: :delivered, delivered_at: %DateTime{}},
+             %ControlCommand{kind: :resume_exports, status: :delivered, delivered_at: %DateTime{}}
+           ] = CommandQueue.list_all()
   end
 
   test "command queue persists pending commands across process restarts" do
@@ -156,6 +173,29 @@ defmodule TelemetryFabricControl.ControlServiceTest do
 
     assert [%ControlCommand{kind: :drain_and_restart, reason: "upgrade"}] =
              CommandQueue.drain(restarted_name, "agent-1")
+
+    assert [] = CommandQueue.list(restarted_name, "agent-1")
+
+    assert [
+             %ControlCommand{
+               kind: :drain_and_restart,
+               reason: "upgrade",
+               status: :delivered,
+               delivered_at: %DateTime{}
+             }
+           ] = CommandQueue.list_all(restarted_name)
+
+    GenServer.stop(Process.whereis(restarted_name))
+    delivered_name = unique_name("command_queue")
+    {:ok, _pid} = CommandQueue.start_link(name: delivered_name, storage_path: path)
+
+    assert [
+             %ControlCommand{
+               kind: :drain_and_restart,
+               status: :delivered,
+               delivered_at: %DateTime{}
+             }
+           ] = CommandQueue.list_all(delivered_name)
   end
 
   defp unique_name(prefix) do

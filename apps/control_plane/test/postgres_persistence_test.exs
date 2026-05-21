@@ -82,6 +82,39 @@ defmodule TelemetryFabricControl.PostgresPersistenceTest do
     assert Enum.any?(rows.audit_events, &(&1.action == "agent.registered" and &1.event_id))
   end
 
+  test "delivered control commands convert to postgres row maps" do
+    assert {:ok, _agent} =
+             AgentRegistry.register(%{
+               agent_id: "agent-1",
+               tenant_id: "payments-prod",
+               hostname: "node-a",
+               version: "0.1.0",
+               config_version: 1
+             })
+
+    assert {:ok, _command} =
+             ControlService.enqueue_command("agent-1", :pause_exports, "maintenance")
+
+    assert {:ok, [_command]} =
+             ControlService.heartbeat(%{
+               agent_id: "agent-1",
+               tenant_id: "payments-prod",
+               config_version: 1
+             })
+
+    snapshot = ControlStateSnapshot.collect()
+    rows = PostgresCodec.snapshot_rows(snapshot)
+
+    assert [
+             %{
+               agent_id: "agent-1",
+               kind: "pause_exports",
+               status: "delivered",
+               delivered_at: %DateTime{}
+             }
+           ] = rows.agent_commands
+  end
+
   test "postgres writer builds deterministic ecto multi operations" do
     SamplePipeline.build("payments-prod")
     |> PipelineStore.put_pipeline("operator")
@@ -150,7 +183,7 @@ defmodule TelemetryFabricControl.PostgresPersistenceTest do
              command_id: "cmd-1",
              agent_id: "agent-1",
              tenant_id: "payments-prod",
-             kind: "pause_exports",
+             kind: "resume_exports",
              status: "pending",
              inserted_at: now
            }).valid?

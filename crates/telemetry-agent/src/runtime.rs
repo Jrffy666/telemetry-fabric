@@ -21,6 +21,7 @@ pub struct AgentRuntime {
     processors: ProcessorChain,
     exporters: ExporterMap,
     metrics: RuntimeMetrics,
+    exports_paused: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -54,6 +55,7 @@ pub struct RuntimeHealth {
     pub queued_bytes: u64,
     pub cursor_segment_id: u64,
     pub cursor_offset: u64,
+    pub exports_paused: bool,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -93,6 +95,7 @@ impl AgentRuntime {
             processors,
             exporters,
             metrics: RuntimeMetrics::default(),
+            exports_paused: false,
         })
     }
 
@@ -132,6 +135,7 @@ impl AgentRuntime {
             queued_bytes: self.queue.queued_bytes()?,
             cursor_segment_id,
             cursor_offset,
+            exports_paused: self.exports_paused,
         })
     }
 
@@ -173,6 +177,19 @@ impl AgentRuntime {
         }
     }
 
+    pub fn pause_exports(&mut self) {
+        self.exports_paused = true;
+    }
+
+    pub fn resume_exports(&mut self) {
+        self.exports_paused = false;
+    }
+
+    #[cfg(test)]
+    pub fn exports_paused(&self) -> bool {
+        self.exports_paused
+    }
+
     pub fn reload_config(
         &mut self,
         config: PipelineConfig,
@@ -200,6 +217,25 @@ impl AgentRuntime {
     }
 
     pub async fn flush(&mut self, max_items: usize) -> Result<FlushReport, DiskQueueError> {
+        if self.exports_paused {
+            return Ok(FlushReport::default());
+        }
+
+        self.flush_unpaused(max_items).await
+    }
+
+    pub async fn flush_for_shutdown(
+        &mut self,
+        max_items: usize,
+    ) -> Result<FlushReport, DiskQueueError> {
+        let was_paused = self.exports_paused;
+        self.exports_paused = false;
+        let result = self.flush_unpaused(max_items).await;
+        self.exports_paused = was_paused;
+        result
+    }
+
+    async fn flush_unpaused(&mut self, max_items: usize) -> Result<FlushReport, DiskQueueError> {
         self.metrics.flush_attempts_total += 1;
         let result = self.flush_inner(max_items).await;
         match result {
@@ -283,6 +319,12 @@ fn format_prometheus_metrics(health: RuntimeHealth, metrics: RuntimeMetrics) -> 
         "telemetry_agent_queue_cursor_offset_bytes",
         "Current durable queue cursor offset in bytes.",
         health.cursor_offset,
+    );
+    write_gauge(
+        &mut output,
+        "telemetry_agent_exports_paused",
+        "Whether exporter flushing is paused by the control plane.",
+        if health.exports_paused { 1 } else { 0 },
     );
 
     write_counter(
@@ -552,9 +594,98 @@ mod tests {
         let metrics = runtime.prometheus_metrics()?;
 
         assert!(metrics.contains("# TYPE telemetry_agent_queue_bytes gauge"));
+        assert!(metrics.contains("telemetry_agent_exports_paused 0"));
         assert!(metrics.contains("telemetry_agent_ingested_records_total 1"));
         assert!(metrics.contains("telemetry_agent_control_registrations_total 1"));
         assert!(metrics.contains("telemetry_agent_control_heartbeat_failures_total 1"));
+
+        cleanup(dir);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn runtime_pause_exports_keeps_records_queued() -> Result<(), Box<dyn Error + Send + Sync>>
+    {
+        let dir = test_dir("runtime-pause-exports");
+        let queue_dir = dir.join("queue");
+        let export_path = dir.join("export.log");
+        let config = PipelineConfig {
+            exporters: vec![ExporterConfig {
+                name: "file".to_string(),
+                protocol: ExporterProtocol::File,
+                endpoint: export_path.to_string_lossy().to_string(),
+                tls: TlsConfig::disabled(),
+            }],
+            routes: vec![RouteConfig {
+                signal: SignalKind::Trace,
+                exporters: vec!["file".to_string()],
+            }],
+            ..PipelineConfig::default()
+        };
+
+        let mut runtime = AgentRuntime::open(config, queue_dir, DiskQueueOptions::default())?;
+        runtime.ingest(TelemetryRecord::new(
+            "tenant-a",
+            SignalKind::Trace,
+            b"span".to_vec(),
+        ))?;
+        runtime.pause_exports();
+
+        let paused_report = runtime.flush(10).await?;
+
+        assert_eq!(paused_report.drained_records, 0);
+        assert!(runtime.exports_paused());
+        assert!(runtime.health()?.queued_bytes > 0);
+        assert_eq!(fs::read_to_string(&export_path)?, "");
+
+        runtime.resume_exports();
+        let resumed_report = runtime.flush(10).await?;
+
+        assert_eq!(resumed_report.drained_records, 1);
+        assert_eq!(
+            fs::read_to_string(&export_path)?,
+            "tenant=tenant-a signal=trace attrs=0 bytes=4\n"
+        );
+
+        cleanup(dir);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn shutdown_flush_bypasses_paused_exports() -> Result<(), Box<dyn Error + Send + Sync>> {
+        let dir = test_dir("runtime-shutdown-flush");
+        let queue_dir = dir.join("queue");
+        let export_path = dir.join("export.log");
+        let config = PipelineConfig {
+            exporters: vec![ExporterConfig {
+                name: "file".to_string(),
+                protocol: ExporterProtocol::File,
+                endpoint: export_path.to_string_lossy().to_string(),
+                tls: TlsConfig::disabled(),
+            }],
+            routes: vec![RouteConfig {
+                signal: SignalKind::Trace,
+                exporters: vec!["file".to_string()],
+            }],
+            ..PipelineConfig::default()
+        };
+
+        let mut runtime = AgentRuntime::open(config, queue_dir, DiskQueueOptions::default())?;
+        runtime.ingest(TelemetryRecord::new(
+            "tenant-a",
+            SignalKind::Trace,
+            b"span".to_vec(),
+        ))?;
+        runtime.pause_exports();
+
+        let report = runtime.flush_for_shutdown(10).await?;
+
+        assert_eq!(report.drained_records, 1);
+        assert!(runtime.exports_paused());
+        assert_eq!(
+            fs::read_to_string(&export_path)?,
+            "tenant=tenant-a signal=trace attrs=0 bytes=4\n"
+        );
 
         cleanup(dir);
         Ok(())

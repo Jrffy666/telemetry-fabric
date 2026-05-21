@@ -53,9 +53,9 @@ defmodule TelemetryFabricControl.PostgresCodec do
       tenant_id: command.tenant_id,
       kind: Atom.to_string(command.kind),
       reason: command.reason,
-      status: "pending",
+      status: command |> ControlCommand.status() |> Atom.to_string(),
       inserted_at: timestamp(command.inserted_at),
-      delivered_at: nil
+      delivered_at: timestamp(ControlCommand.delivered_at(command))
     }
   end
 
@@ -75,7 +75,7 @@ defmodule TelemetryFabricControl.PostgresCodec do
       tenants: tenant_rows(snapshot),
       agents: Enum.map(snapshot.agents, &agent_row/1),
       pipeline_versions: Enum.map(snapshot.pipeline_versions, &pipeline_version_row/1),
-      agent_commands: Enum.map(snapshot.pending_commands, &command_row/1),
+      agent_commands: Enum.map(snapshot.agent_commands, &command_row/1),
       audit_events: Enum.map(snapshot.audit_events, &audit_event_row/1)
     }
   end
@@ -84,7 +84,7 @@ defmodule TelemetryFabricControl.PostgresCodec do
     [
       Enum.map(snapshot.agents, & &1.tenant_id),
       Enum.map(snapshot.pipeline_versions, & &1.tenant_id),
-      Enum.map(snapshot.pending_commands, & &1.tenant_id)
+      Enum.map(snapshot.agent_commands, & &1.tenant_id)
     ]
     |> List.flatten()
     |> Enum.uniq()
@@ -117,6 +117,7 @@ defmodule TelemetryFabricControl.PostgresCodec do
   defp normalize_json(value) when is_atom(value), do: Atom.to_string(value)
   defp normalize_json(value), do: value
 
+  defp timestamp(nil), do: nil
   defp timestamp(%DateTime{} = value), do: DateTime.truncate(value, :microsecond)
 
   defp sha256(payload) do

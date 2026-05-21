@@ -26,6 +26,8 @@ This repository currently contains:
   currently cover gauge, sum, histogram, exponential histogram, and summary
   datapoints.
 - A JSON health endpoint and Prometheus-format `/metrics` for agent self-observability.
+- Durable MVP control commands for config reload, export pause/resume, and
+  drain-before-restart, including delivered-state persistence.
 - An Elixir OTP control-plane skeleton.
 - PostgreSQL schema, state-to-row codec, Ecto schemas, Repo wiring, migration
   task, and periodic snapshot sync for the next control-plane persistence

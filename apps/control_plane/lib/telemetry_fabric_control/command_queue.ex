@@ -4,7 +4,8 @@ defmodule TelemetryFabricControl.CommandQueue do
 
   Heartbeat-derived commands such as `reload_config` can be returned directly by
   `ControlService`; this queue is for commands that must survive process
-  restarts until an agent heartbeat drains them.
+  restarts until an agent heartbeat drains them. Drained commands are retained
+  as delivered history so PostgreSQL snapshots can record the full lifecycle.
   """
 
   use GenServer
@@ -75,14 +76,37 @@ defmodule TelemetryFabricControl.CommandQueue do
   end
 
   def handle_call({:drain, agent_id}, _from, state) do
-    pending = Map.get(state.commands, agent_id, [])
-    commands = Map.delete(state.commands, agent_id)
+    existing = Map.get(state.commands, agent_id, [])
+    pending = Enum.filter(existing, &ControlCommand.pending?/1)
+    delivered_at = DateTime.utc_now()
+
+    updated =
+      Enum.map(existing, fn command ->
+        if ControlCommand.pending?(command) do
+          ControlCommand.mark_delivered(command, delivered_at)
+        else
+          command
+        end
+      end)
+
+    commands =
+      if updated == [] do
+        Map.delete(state.commands, agent_id)
+      else
+        Map.put(state.commands, agent_id, updated)
+      end
+
     persist!(state, commands)
     {:reply, pending, %{state | commands: commands}}
   end
 
   def handle_call({:list, agent_id}, _from, state) do
-    {:reply, Map.get(state.commands, agent_id, []), state}
+    pending =
+      state.commands
+      |> Map.get(agent_id, [])
+      |> Enum.filter(&ControlCommand.pending?/1)
+
+    {:reply, pending, state}
   end
 
   def handle_call(:list_all, _from, state) do

@@ -56,17 +56,41 @@ defmodule TelemetryFabricControl.PostgresLivePersistenceTest do
       snapshot = ControlStateSnapshot.collect()
 
       assert :ok = PostgresMigrator.migrate(LiveRepo)
-      assert {:ok, _changes} = PostgresSync.sync_once(repo: LiveRepo, snapshot: snapshot)
+
+      assert {:ok, _changes} =
+               PostgresSync.sync_once(repo: LiveRepo, snapshot: delivered_snapshot)
 
       assert count!("tenants", "tenant_id = $1", ["payments-prod"]) == 1
       assert count!("agents", "agent_id = $1", ["agent-1"]) == 1
       assert count!("pipeline_versions", "tenant_id = $1", ["payments-prod"]) == 1
       assert count!("agent_commands", "agent_id = $1", ["agent-1"]) == 1
 
+      assert scalar!("SELECT status FROM agent_commands WHERE agent_id = $1", ["agent-1"]) ==
+               "pending"
+
       audit_count =
         count!("audit_events", "resource IN ($1, $2)", ["payments-prod/default", "agent-1"])
 
       assert audit_count >= 2
+
+      assert {:ok, [_command]} =
+               ControlService.heartbeat(%{
+                 agent_id: "agent-1",
+                 tenant_id: "payments-prod",
+                 config_version: 1
+               })
+
+      delivered_snapshot = ControlStateSnapshot.collect()
+
+      assert {:ok, _changes} =
+               PostgresSync.sync_once(repo: LiveRepo, snapshot: delivered_snapshot)
+
+      assert scalar!("SELECT status FROM agent_commands WHERE agent_id = $1", ["agent-1"]) ==
+               "delivered"
+
+      assert scalar!("SELECT delivered_at IS NOT NULL FROM agent_commands WHERE agent_id = $1", [
+               "agent-1"
+             ]) == true
 
       assert {:ok, _changes} = PostgresSync.sync_once(repo: LiveRepo, snapshot: snapshot)
 
@@ -79,6 +103,11 @@ defmodule TelemetryFabricControl.PostgresLivePersistenceTest do
         SQL.query!(LiveRepo, "SELECT count(*) FROM #{table} WHERE #{where_clause}", params)
 
       count
+    end
+
+    defp scalar!(statement, params) do
+      %{rows: [[value]]} = SQL.query!(LiveRepo, statement, params)
+      value
     end
 
     defp reset_tables! do

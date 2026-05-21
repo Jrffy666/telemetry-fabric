@@ -5,7 +5,7 @@ defmodule TelemetryFabricControl.Schema.AgentCommand do
 
   import Ecto.Changeset
 
-  @valid_kinds ["reload_config", "drain_and_restart", "pause_exports"]
+  @valid_kinds ["reload_config", "drain_and_restart", "pause_exports", "resume_exports"]
   @valid_statuses ["pending", "delivered"]
 
   @primary_key {:command_id, :string, autogenerate: false}
