@@ -40,7 +40,9 @@ defmodule TelemetryFabricControl.PostgresWriter do
       conflict_target: [:tenant_id, :pipeline_name, :version]
     )
     |> Multi.insert_all(:agent_commands, AgentCommand, rows.agent_commands,
-      on_conflict: {:replace, [:kind, :reason, :status, :inserted_at, :delivered_at]},
+      on_conflict:
+        {:replace,
+         [:kind, :reason, :status, :inserted_at, :delivered_at, :acknowledged_at, :last_error]},
       conflict_target: [:command_id]
     )
     |> Multi.insert_all(:audit_events, AuditEvent, rows.audit_events,

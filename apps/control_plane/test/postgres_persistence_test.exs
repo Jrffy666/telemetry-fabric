@@ -118,6 +118,52 @@ defmodule TelemetryFabricControl.PostgresPersistenceTest do
     assert Enum.any?(rows.audit_events, &(&1.action == "command.delivered"))
   end
 
+  test "acknowledged control commands convert to postgres row maps" do
+    assert {:ok, _agent} =
+             AgentRegistry.register(%{
+               agent_id: "agent-1",
+               tenant_id: "payments-prod",
+               hostname: "node-a",
+               version: "0.1.0",
+               config_version: 1
+             })
+
+    assert {:ok, command} =
+             ControlService.enqueue_command("agent-1", :pause_exports, "maintenance")
+
+    assert {:ok, [_command]} =
+             ControlService.heartbeat(%{
+               agent_id: "agent-1",
+               tenant_id: "payments-prod",
+               config_version: 1
+             })
+
+    assert {:ok, _acknowledged} =
+             ControlService.ack_command(%{
+               agent_id: "agent-1",
+               tenant_id: "payments-prod",
+               command_id: command.command_id,
+               success: false,
+               error: "processor reload failed"
+             })
+
+    snapshot = ControlStateSnapshot.collect()
+    rows = PostgresCodec.snapshot_rows(snapshot)
+
+    assert [
+             %{
+               agent_id: "agent-1",
+               kind: "pause_exports",
+               status: "failed",
+               delivered_at: %DateTime{},
+               acknowledged_at: %DateTime{},
+               last_error: "processor reload failed"
+             }
+           ] = rows.agent_commands
+
+    assert Enum.any?(rows.audit_events, &(&1.action == "command.failed"))
+  end
+
   test "rolled back pipeline versions convert to postgres row maps" do
     first_config = SamplePipeline.build("payments-prod")
     second_config = %{first_config | processors: [%{name: "redact", enabled: true}]}
@@ -214,7 +260,7 @@ defmodule TelemetryFabricControl.PostgresPersistenceTest do
              agent_id: "agent-1",
              tenant_id: "payments-prod",
              kind: "resume_exports",
-             status: "pending",
+             status: "succeeded",
              inserted_at: now
            }).valid?
 

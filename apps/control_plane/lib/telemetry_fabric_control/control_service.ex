@@ -111,6 +111,22 @@ defmodule TelemetryFabricControl.ControlService do
     end
   end
 
+  def ack_command(attrs) when is_map(attrs) do
+    with :ok <- require_text(:agent_id, Map.get(attrs, :agent_id)),
+         :ok <- require_text(:tenant_id, Map.get(attrs, :tenant_id)),
+         :ok <- require_text(:command_id, Map.get(attrs, :command_id)),
+         {:ok, success} <- require_boolean(:success, Map.get(attrs, :success)),
+         {:ok, agent} <- get_agent(Map.fetch!(attrs, :agent_id)),
+         :ok <- require_same_tenant(agent, Map.fetch!(attrs, :tenant_id)) do
+      ack_command_record(
+        agent.agent_id,
+        Map.fetch!(attrs, :command_id),
+        success,
+        Map.get(attrs, :error)
+      )
+    end
+  end
+
   def put_pipeline(attrs) when is_map(attrs) do
     with :ok <- require_text(:tenant_id, Map.get(attrs, :tenant_id)),
          :ok <- require_text(:pipeline, pipeline_name(attrs)),
@@ -204,6 +220,14 @@ defmodule TelemetryFabricControl.ControlService do
     end
   end
 
+  defp ack_command_record(agent_id, command_id, success, message) do
+    if postgres_primary?() do
+      PostgresControlStore.ack_command(agent_id, command_id, success, message)
+    else
+      CommandQueue.ack(agent_id, command_id, success, message)
+    end
+  end
+
   defp get_pipeline(tenant_id, name) do
     if postgres_primary?() do
       PostgresControlStore.get_pipeline(tenant_id, name)
@@ -280,6 +304,9 @@ defmodule TelemetryFabricControl.ControlService do
     do: {:ok, value}
 
   defp require_positive_integer(field, value), do: {:error, {:invalid_integer, field, value}}
+
+  defp require_boolean(_field, value) when is_boolean(value), do: {:ok, value}
+  defp require_boolean(field, value), do: {:error, {:invalid_boolean, field, value}}
 
   defp register_message(0), do: "agent registered; no pipeline config is available"
   defp register_message(_version), do: "agent registered"

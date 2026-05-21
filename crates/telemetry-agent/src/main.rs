@@ -7,8 +7,8 @@ mod tf_line;
 
 use config_file::load_pipeline_config;
 use control_client::{
-    ConfigUpdate, ControlClient, ControlClientSecurity, ControlCommandKind, HeartbeatStats,
-    validate_config_update,
+    ConfigUpdate, ControlClient, ControlClientSecurity, ControlCommand, ControlCommandKind,
+    ControlCommandStatus, HeartbeatStats, validate_config_update,
 };
 use otlp::serve_otlp_grpc;
 use otlp_http::serve_otlp_http;
@@ -20,8 +20,8 @@ use std::sync::Arc;
 use std::time::Duration;
 use telemetry_buffer::DiskQueueOptions;
 use telemetry_core::{
-    ExporterConfig, ExporterProtocol, PipelineConfig, ReceiverProtocol, RouteConfig, SignalKind,
-    TelemetryRecord, TlsConfig,
+    ExporterConfig, ExporterProtocol, ExporterRetryConfig, PipelineConfig, ReceiverProtocol,
+    RouteConfig, SignalKind, TelemetryRecord, TlsConfig,
 };
 use tf_line::parse_line_record;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
@@ -187,8 +187,7 @@ fn spawn_flush_worker(
         let mut interval = tokio::time::interval(flush_interval);
         loop {
             interval.tick().await;
-            let mut runtime = runtime.lock().await;
-            match runtime.flush(flush_batch_size).await {
+            match AgentRuntime::flush_shared(Arc::clone(&runtime), flush_batch_size).await {
                 Ok(report) if report.drained_records > 0 => {
                     println!(
                         "flush completed: drained={} exported={} dropped={} bytes={}",
@@ -285,9 +284,16 @@ fn spawn_control_worker(
                                     "control config applied: version={} checksum={}",
                                     update.version, update.checksum
                                 );
+                                ack_if_delivered(&client, &command, true, None).await;
                             }
-                            Ok(None) => {}
-                            Err(err) => eprintln!("control config reload failed: {err}"),
+                            Ok(None) => {
+                                ack_if_delivered(&client, &command, true, None).await;
+                            }
+                            Err(err) => {
+                                let message = err.to_string();
+                                eprintln!("control config reload failed: {message}");
+                                ack_if_delivered(&client, &command, false, Some(&message)).await;
+                            }
                         }
                     }
                     ControlCommandKind::DrainAndRestart => {
@@ -296,12 +302,14 @@ fn spawn_control_worker(
                             command.command_id, command.reason
                         );
                         if let Err(err) =
-                            drain_and_exit(&runtime, drain_batch_size, &command.command_id).await
+                            drain_and_exit(&runtime, drain_batch_size, &client, &command).await
                         {
+                            let message = err.to_string();
                             eprintln!(
                                 "control drain_and_restart failed: id={} error={err}",
                                 command.command_id
                             );
+                            ack_if_delivered(&client, &command, false, Some(&message)).await;
                         }
                     }
                     ControlCommandKind::PauseExports => {
@@ -310,6 +318,7 @@ fn spawn_control_worker(
                             "control exports paused: id={} reason={}",
                             command.command_id, command.reason
                         );
+                        ack_if_delivered(&client, &command, true, None).await;
                     }
                     ControlCommandKind::ResumeExports => {
                         runtime.lock().await.resume_exports();
@@ -317,12 +326,15 @@ fn spawn_control_worker(
                             "control exports resumed: id={} reason={}",
                             command.command_id, command.reason
                         );
+                        ack_if_delivered(&client, &command, true, None).await;
                     }
                     ControlCommandKind::Unknown => {
+                        let message = "unknown control command".to_string();
                         eprintln!(
                             "unknown control command ignored: id={} reason={}",
                             command.command_id, command.reason
                         );
+                        ack_if_delivered(&client, &command, false, Some(&message)).await;
                     }
                 }
             }
@@ -333,18 +345,24 @@ fn spawn_control_worker(
 async fn drain_and_exit(
     runtime: &Arc<Mutex<AgentRuntime>>,
     batch_size: usize,
-    command_id: &str,
+    client: &ControlClient,
+    command: &ControlCommand,
 ) -> Result<(), DynError> {
     loop {
-        let report = runtime.lock().await.flush_for_shutdown(batch_size).await?;
+        let report =
+            AgentRuntime::flush_for_shutdown_shared(Arc::clone(runtime), batch_size).await?;
         if report.drained_records == 0 {
-            println!("control drain completed: id={command_id}; exiting for supervisor restart");
+            ack_if_delivered(client, command, true, None).await;
+            println!(
+                "control drain completed: id={}; exiting for supervisor restart",
+                command.command_id
+            );
             std::process::exit(0);
         }
 
         println!(
             "control drain progress: id={} drained={} exported={} dropped={} bytes={}",
-            command_id,
+            command.command_id,
             report.drained_records,
             report.exported_records,
             report.dropped_records,
@@ -352,6 +370,27 @@ async fn drain_and_exit(
         );
 
         tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+}
+
+async fn ack_if_delivered(
+    client: &ControlClient,
+    command: &ControlCommand,
+    success: bool,
+    error: Option<&str>,
+) {
+    if command.status != ControlCommandStatus::Delivered {
+        return;
+    }
+
+    if let Err(err) = client
+        .ack_command(&command.command_id, success, error)
+        .await
+    {
+        eprintln!(
+            "control command ack failed: id={} success={} error={err}",
+            command.command_id, success
+        );
     }
 }
 
@@ -705,12 +744,14 @@ fn build_pipeline_config(args: &Args) -> Result<PipelineConfig, DynError> {
                 } else {
                     TlsConfig::disabled()
                 },
+                retry: ExporterRetryConfig::default(),
             },
             ExporterConfig {
                 name: "stdout".to_string(),
                 protocol: ExporterProtocol::Stdout,
                 endpoint: "stdout://local".to_string(),
                 tls: TlsConfig::disabled(),
+                retry: ExporterRetryConfig::default(),
             },
         ];
         config.routes = vec![

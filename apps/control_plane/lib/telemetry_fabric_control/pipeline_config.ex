@@ -45,7 +45,7 @@ defmodule TelemetryFabricControl.PipelineConfig do
       "",
       named_section("receivers", config.receivers, [:protocol, :endpoint]),
       named_section("processors", config.processors, [:enabled]),
-      named_section("exporters", config.exporters, [:protocol, :endpoint, :tls]),
+      named_section("exporters", config.exporters, [:protocol, :endpoint, :tls, :retry]),
       route_section(config.routes)
     ]
     |> List.flatten()
@@ -93,14 +93,25 @@ defmodule TelemetryFabricControl.PipelineConfig do
           "  #{name}:",
           keys
           |> Enum.filter(&map_has_key?(entry, &1))
-          |> Enum.map(fn key ->
-            "    #{key}: #{yaml_scalar(map_get(entry, key))}"
-          end)
+          |> Enum.flat_map(fn key -> yaml_field(key, map_get(entry, key)) end)
         ]
       end),
       ""
     ]
   end
+
+  defp yaml_field(key, value) when is_map(value) do
+    [
+      "    #{key}:",
+      value
+      |> Enum.sort_by(fn {nested_key, _nested_value} -> to_string(nested_key) end)
+      |> Enum.map(fn {nested_key, nested_value} ->
+        "      #{nested_key}: #{yaml_scalar(nested_value)}"
+      end)
+    ]
+  end
+
+  defp yaml_field(key, value), do: ["    #{key}: #{yaml_scalar(value)}"]
 
   defp route_section(routes) do
     [

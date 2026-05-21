@@ -150,6 +150,7 @@ defmodule TelemetryFabricControl.HttpControlServerTest do
              })
 
     assert [%{"kind" => "pause_exports", "reason" => "maintenance"}] = heartbeat["commands"]
+    [pause_command] = heartbeat["commands"]
 
     assert {200, queued_resume} =
              post_json(port, "/v1/agents/commands", %{
@@ -179,6 +180,17 @@ defmodule TelemetryFabricControl.HttpControlServerTest do
 
     assert status["status"]["healthy"] == true
     assert status["status"]["warnings"] == []
+
+    assert {200, acked} =
+             post_json(port, "/v1/agents/commands/ack", %{
+               agent_id: "agent-1",
+               tenant_id: "payments-prod",
+               command_id: pause_command["command_id"],
+               success: true
+             })
+
+    assert acked["command"]["status"] == "succeeded"
+    assert is_binary(acked["command"]["acknowledged_at"])
   end
 
   test "returns HTTP errors for bad requests", %{port: port} do

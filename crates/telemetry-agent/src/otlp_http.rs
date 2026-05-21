@@ -412,7 +412,8 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
     use telemetry_buffer::DiskQueueOptions;
     use telemetry_core::{
-        ExporterConfig, ExporterProtocol, PipelineConfig, RouteConfig, SignalKind, TlsConfig,
+        ExporterConfig, ExporterProtocol, ExporterRetryConfig, PipelineConfig, RouteConfig,
+        SignalKind, TlsConfig,
     };
     use tokio::net::TcpStream;
 
@@ -446,6 +447,7 @@ mod tests {
                 protocol: ExporterProtocol::File,
                 endpoint: export_path.to_string_lossy().to_string(),
                 tls: TlsConfig::disabled(),
+                retry: ExporterRetryConfig::default(),
             }],
             routes: vec![RouteConfig {
                 signal: SignalKind::Log,
@@ -503,6 +505,7 @@ mod tests {
                 protocol: ExporterProtocol::File,
                 endpoint: export_path.to_string_lossy().to_string(),
                 tls: TlsConfig::disabled(),
+                retry: ExporterRetryConfig::default(),
             }],
             routes: vec![RouteConfig {
                 signal: SignalKind::Log,

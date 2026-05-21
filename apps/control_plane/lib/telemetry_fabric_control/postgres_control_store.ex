@@ -197,9 +197,58 @@ defmodule TelemetryFabricControl.PostgresControlStore do
           )
         end
 
-        commands = Enum.map(pending, &command_from_row/1)
+        commands =
+          Enum.map(pending, fn row ->
+            row
+            |> command_from_row()
+            |> ControlCommand.mark_delivered(delivered_at)
+          end)
+
         Enum.each(commands, &audit_command!(repo, &1, "command.delivered", agent_id))
         commands
+      end)
+
+    unwrap_transaction(result)
+  end
+
+  def ack_command(agent_id, command_id, success, message \\ nil, repo \\ Repo)
+      when is_boolean(success) do
+    result =
+      repo.transaction(fn ->
+        command =
+          repo.one(
+            from(command in AgentCommand,
+              where: command.agent_id == ^agent_id and command.command_id == ^command_id,
+              lock: "FOR UPDATE"
+            )
+          )
+
+        if command == nil do
+          repo.rollback(:not_found)
+        end
+
+        acknowledged_at = timestamp()
+        status = if success, do: "succeeded", else: "failed"
+        last_error = normalize_ack_error(success, message)
+
+        repo.update_all(
+          from(row in AgentCommand, where: row.command_id == ^command_id),
+          set: [status: status, acknowledged_at: acknowledged_at, last_error: last_error]
+        )
+
+        acknowledged =
+          command
+          |> command_from_row()
+          |> ControlCommand.mark_acknowledged(success, message, acknowledged_at)
+
+        audit_command!(
+          repo,
+          acknowledged,
+          if(success, do: "command.succeeded", else: "command.failed"),
+          agent_id
+        )
+
+        acknowledged
       end)
 
     unwrap_transaction(result)
@@ -327,9 +376,16 @@ defmodule TelemetryFabricControl.PostgresControlStore do
       reason: row.reason || "",
       status: String.to_existing_atom(row.status),
       inserted_at: row.inserted_at,
-      delivered_at: row.delivered_at
+      delivered_at: row.delivered_at,
+      acknowledged_at: Map.get(row, :acknowledged_at),
+      last_error: Map.get(row, :last_error)
     })
   end
+
+  defp normalize_ack_error(true, _message), do: nil
+
+  defp normalize_ack_error(false, message) when is_binary(message), do: String.trim(message)
+  defp normalize_ack_error(false, _message), do: nil
 
   defp require_same_tenant(_agent, nil), do: :ok
 

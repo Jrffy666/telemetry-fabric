@@ -34,6 +34,14 @@ defmodule TelemetryFabricControl.CommandQueue do
     GenServer.call(server, {:drain, agent_id})
   end
 
+  def ack(agent_id, command_id, success, message \\ nil) do
+    ack(__MODULE__, agent_id, command_id, success, message)
+  end
+
+  def ack(server, agent_id, command_id, success, message) when is_boolean(success) do
+    GenServer.call(server, {:ack, agent_id, command_id, success, message})
+  end
+
   def list(agent_id) do
     list(__MODULE__, agent_id)
   end
@@ -81,6 +89,7 @@ defmodule TelemetryFabricControl.CommandQueue do
   def handle_call({:drain, agent_id}, _from, state) do
     existing = Map.get(state.commands, agent_id, [])
     pending = Enum.filter(existing, &ControlCommand.pending?/1)
+    pending_ids = MapSet.new(Enum.map(pending, & &1.command_id))
     delivered_at = DateTime.utc_now()
 
     updated =
@@ -92,6 +101,9 @@ defmodule TelemetryFabricControl.CommandQueue do
         end
       end)
 
+    delivered =
+      Enum.filter(updated, &MapSet.member?(pending_ids, &1.command_id))
+
     commands =
       if updated == [] do
         Map.delete(state.commands, agent_id)
@@ -101,7 +113,33 @@ defmodule TelemetryFabricControl.CommandQueue do
 
     persist!(state, commands)
     Enum.each(pending, &audit_command(state, &1, "command.delivered", agent_id))
-    {:reply, pending, %{state | commands: commands}}
+    {:reply, delivered, %{state | commands: commands}}
+  end
+
+  def handle_call({:ack, agent_id, command_id, success, message}, _from, state) do
+    existing = Map.get(state.commands, agent_id, [])
+
+    case Enum.split_with(existing, &(&1.command_id == command_id)) do
+      {[command], rest} ->
+        acknowledged = ControlCommand.mark_acknowledged(command, success, message)
+
+        commands =
+          Map.put(state.commands, agent_id, Enum.sort_by([acknowledged | rest], &sort_key/1))
+
+        persist!(state, commands)
+
+        audit_command(
+          state,
+          acknowledged,
+          if(success, do: "command.succeeded", else: "command.failed"),
+          agent_id
+        )
+
+        {:reply, {:ok, acknowledged}, %{state | commands: commands}}
+
+      {[], _rest} ->
+        {:reply, {:error, :not_found}, state}
+    end
   end
 
   def handle_call({:list, agent_id}, _from, state) do
@@ -132,6 +170,10 @@ defmodule TelemetryFabricControl.CommandQueue do
 
   defp persist!(state, commands) do
     TelemetryFabricControl.StateFile.persist(state.storage_path, commands)
+  end
+
+  defp sort_key(%ControlCommand{} = command) do
+    {DateTime.to_unix(command.inserted_at, :microsecond), command.command_id}
   end
 
   defp audit_command(state, %ControlCommand{} = command, action, actor) do

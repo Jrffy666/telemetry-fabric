@@ -92,6 +92,11 @@ The agent runtime follows this sequence during `flush`:
 6. Commit the queue cursor only after all exports succeed.
 
 This gives the MVP at-least-once delivery semantics for exporter failures.
+Each exporter call is guarded by a per-exporter timeout and retried with
+exponential backoff before the flush fails and leaves the batch queued for a
+later retry. Defaults are 30 seconds, 3 attempts, and 100 ms initial backoff.
+YAML exporters can override this with `retry.max_attempts`,
+`retry.timeout_ms`, and `retry.initial_backoff_ms`.
 
 In `--listen`, `--otlp-grpc`, and `--otlp-http` modes, the receivers
 automatically call `flush` from a background worker. `--flush-batch-size`
@@ -123,6 +128,11 @@ responses:
 - `resume_exports`: resume normal background exporter flushes.
 - `drain_and_restart`: flush queued records until no batch remains, then exit
   so the external supervisor restarts the process.
+
+Queued operator commands now have an execution acknowledgment path. Heartbeat
+delivery marks a command as `delivered`; after the agent executes the command it
+POSTs an ACK so the control plane can persist `succeeded` or `failed`,
+including the failure message when execution did not complete.
 
 ## Health And Metrics Endpoint
 
@@ -183,6 +193,8 @@ The file controls:
 - tenant limits such as `max_queue_bytes`
 - tenant ingest rate budgets such as `max_ingest_bytes_per_second` when the
   `tenant-rate-limit` processor is enabled
+- per-exporter retry budgets and timeouts with `retry.max_attempts`,
+  `retry.timeout_ms`, and `retry.initial_backoff_ms`
 
 Command-line flags such as `--tenant`, `--otlp-grpc`, `--otlp-http`, `--listen`, and
 `--otlp-export-endpoint` can still override runtime behavior for local testing

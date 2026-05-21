@@ -56,6 +56,7 @@ pub struct ControlCommand {
     pub command_id: String,
     pub kind: ControlCommandKind,
     pub reason: String,
+    pub status: ControlCommandStatus,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -64,6 +65,15 @@ pub enum ControlCommandKind {
     DrainAndRestart,
     PauseExports,
     ResumeExports,
+    Unknown,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ControlCommandStatus {
+    Pending,
+    Delivered,
+    Succeeded,
+    Failed,
     Unknown,
 }
 
@@ -148,6 +158,27 @@ impl ControlClient {
         );
         let response = self.post_json("/v1/agents/config", &body).await?;
         parse_config_update_response(&response)
+    }
+
+    pub async fn ack_command(
+        &self,
+        command_id: &str,
+        success: bool,
+        error: Option<&str>,
+    ) -> Result<(), DynError> {
+        let error_field = match error {
+            Some(error) => format!(",\"error\":\"{}\"", json_escape(error)),
+            None => String::new(),
+        };
+        let body = format!(
+            "{{\"agent_id\":\"{}\",\"tenant_id\":\"{}\",\"command_id\":\"{}\",\"success\":{}{error_field}}}",
+            json_escape(&self.agent_id),
+            json_escape(&self.tenant_id),
+            json_escape(command_id),
+            success
+        );
+        self.post_json("/v1/agents/commands/ack", &body).await?;
+        Ok(())
     }
 
     async fn post_json(&self, path: &str, body: &str) -> Result<Value, DynError> {
@@ -394,6 +425,9 @@ fn parse_command(value: &Value) -> Result<ControlCommand, DynError> {
         command_id: get_string(value, "command_id")?.to_string(),
         kind: parse_command_kind(get_string(value, "kind")?),
         reason: get_string(value, "reason")?.to_string(),
+        status: get_optional_string(value, "status")
+            .map(parse_command_status)
+            .unwrap_or(ControlCommandStatus::Unknown),
     })
 }
 
@@ -420,6 +454,16 @@ fn parse_command_kind(value: &str) -> ControlCommandKind {
     }
 }
 
+fn parse_command_status(value: &str) -> ControlCommandStatus {
+    match value {
+        "pending" => ControlCommandStatus::Pending,
+        "delivered" => ControlCommandStatus::Delivered,
+        "succeeded" => ControlCommandStatus::Succeeded,
+        "failed" => ControlCommandStatus::Failed,
+        _ => ControlCommandStatus::Unknown,
+    }
+}
+
 fn get_field<'a>(value: &'a Value, key: &str) -> Result<&'a Value, DynError> {
     let mapping = value
         .as_mapping()
@@ -433,6 +477,10 @@ fn get_string<'a>(value: &'a Value, key: &str) -> Result<&'a str, DynError> {
     get_field(value, key)?
         .as_str()
         .ok_or_else(|| ControlClientError(format!("field must be a string: {key}")).into())
+}
+
+fn get_optional_string<'a>(value: &'a Value, key: &str) -> Option<&'a str> {
+    get_field(value, key).ok()?.as_str()
 }
 
 fn get_bool(value: &Value, key: &str) -> Result<bool, DynError> {
@@ -633,7 +681,7 @@ routes:
     #[test]
     fn parses_control_commands_response() -> Result<(), DynError> {
         let response = serde_yaml::from_str(
-            r#"{"commands":[{"command_id":"cmd-1","kind":"resume_exports","reason":"done"}]}"#,
+            r#"{"commands":[{"command_id":"cmd-1","kind":"resume_exports","reason":"done","status":"delivered"}]}"#,
         )?;
 
         let commands = parse_commands_response(&response)?;
@@ -641,6 +689,7 @@ routes:
         assert_eq!(commands.len(), 1);
         assert_eq!(commands[0].kind, ControlCommandKind::ResumeExports);
         assert_eq!(commands[0].reason, "done");
+        assert_eq!(commands[0].status, ControlCommandStatus::Delivered);
         Ok(())
     }
 

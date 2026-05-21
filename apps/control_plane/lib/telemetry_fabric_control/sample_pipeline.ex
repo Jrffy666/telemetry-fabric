@@ -19,7 +19,13 @@ defmodule TelemetryFabricControl.SamplePipeline do
         %{name: "batch", kind: "batch", enabled: true}
       ],
       exporters: [
-        %{name: "stdout", protocol: "stdout", endpoint: "stdout://local", tls: false}
+        %{
+          name: "stdout",
+          protocol: "stdout",
+          endpoint: "stdout://local",
+          tls: false,
+          retry: %{max_attempts: 3, timeout_ms: 30_000, initial_backoff_ms: 100}
+        }
       ],
       routes: [
         %{signal: "trace", exporters: ["stdout"]},

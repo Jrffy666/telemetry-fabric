@@ -1,0 +1,43 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: telemetry-fabric-agent
+  namespace: observability
+  labels:
+    app.kubernetes.io/name: telemetry-fabric-agent
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: telemetry-fabric-agent
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - ports:
+        - protocol: TCP
+          port: otlp-grpc
+        - protocol: TCP
+          port: health
+  egress:
+    - {}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: telemetry-fabric-control-plane
+  namespace: observability
+  labels:
+    app.kubernetes.io/name: telemetry-fabric-control-plane
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: telemetry-fabric-control-plane
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - ports:
+        - protocol: TCP
+          port: http
+  egress:
+    - {}

@@ -22,6 +22,10 @@ agent:
     certKey: tls.crt
     keyKey: tls.key
     serverName: ""
+  serviceAccount:
+    create: true
+    name: ""
+    annotations: {}
   podSecurityContext:
     fsGroup: 65532
     seccompProfile:
@@ -71,6 +75,13 @@ controlPlane:
     enabled: true
     size: 1Gi
     storageClass: ""
+  serviceAccount:
+    create: true
+    name: ""
+    annotations: {}
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 1
   resources:
     requests:
       cpu: 100m
@@ -94,6 +105,15 @@ service:
   type: ClusterIP
   port: 4317
   healthPort: 13133
+
+networkPolicy:
+  enabled: false
+
+serviceMonitor:
+  enabled: false
+  namespace: ""
+  interval: 30s
+  labels: {}
 
 resources:
   requests:

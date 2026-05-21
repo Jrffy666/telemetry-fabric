@@ -6,7 +6,7 @@ defmodule TelemetryFabricControl.Schema.AgentCommand do
   import Ecto.Changeset
 
   @valid_kinds ["reload_config", "drain_and_restart", "pause_exports", "resume_exports"]
-  @valid_statuses ["pending", "delivered"]
+  @valid_statuses ["pending", "delivered", "succeeded", "failed"]
 
   @primary_key {:command_id, :string, autogenerate: false}
   schema "agent_commands" do
@@ -17,6 +17,8 @@ defmodule TelemetryFabricControl.Schema.AgentCommand do
     field(:status, :string, default: "pending")
     field(:inserted_at, :utc_datetime_usec)
     field(:delivered_at, :utc_datetime_usec)
+    field(:acknowledged_at, :utc_datetime_usec)
+    field(:last_error, :string)
   end
 
   def changeset(struct \\ %__MODULE__{}, attrs) do
@@ -29,7 +31,9 @@ defmodule TelemetryFabricControl.Schema.AgentCommand do
       :reason,
       :status,
       :inserted_at,
-      :delivered_at
+      :delivered_at,
+      :acknowledged_at,
+      :last_error
     ])
     |> validate_required([:command_id, :agent_id, :tenant_id, :kind, :status, :inserted_at])
     |> validate_inclusion(:kind, @valid_kinds)

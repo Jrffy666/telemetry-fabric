@@ -48,12 +48,20 @@ CREATE TABLE IF NOT EXISTS agent_commands (
   reason text NOT NULL DEFAULT '',
   status text NOT NULL DEFAULT 'pending',
   inserted_at timestamptz NOT NULL,
-  delivered_at timestamptz
+  delivered_at timestamptz,
+  acknowledged_at timestamptz,
+  last_error text
 );
 
 CREATE INDEX IF NOT EXISTS agent_commands_pending_idx
   ON agent_commands (agent_id, inserted_at)
   WHERE status = 'pending';
+
+ALTER TABLE agent_commands
+  ADD COLUMN IF NOT EXISTS acknowledged_at timestamptz;
+
+ALTER TABLE agent_commands
+  ADD COLUMN IF NOT EXISTS last_error text;
 
 CREATE TABLE IF NOT EXISTS audit_events (
   id bigserial PRIMARY KEY,

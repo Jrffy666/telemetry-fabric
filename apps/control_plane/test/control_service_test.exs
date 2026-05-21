@@ -46,6 +46,8 @@ defmodule TelemetryFabricControl.ControlServiceTest do
     assert payload =~ ~s(tenant: "payments-prod")
     assert payload =~ ~s(pipeline: "default")
     assert payload =~ ~s(otlp-grpc:)
+    assert payload =~ "retry:"
+    assert payload =~ "max_attempts: 3"
     assert {:ok, decoded_checksum} = Base.decode16(checksum, case: :mixed)
     assert byte_size(decoded_checksum) == 32
 
@@ -261,6 +263,47 @@ defmodule TelemetryFabricControl.ControlServiceTest do
 
     assert Enum.count(audit_actions, &(&1 == "command.enqueued")) == 2
     assert Enum.count(audit_actions, &(&1 == "command.delivered")) == 2
+  end
+
+  test "agents acknowledge delivered operator commands" do
+    ControlService.register_agent(%{
+      agent_id: "agent-1",
+      tenant_id: "payments-prod",
+      hostname: "node-a",
+      version: "0.1.0"
+    })
+
+    assert {:ok, queued} =
+             ControlService.enqueue_command("agent-1", :pause_exports, "maintenance")
+
+    assert {:ok, [%ControlCommand{status: :delivered, command_id: command_id}]} =
+             ControlService.heartbeat(%{
+               agent_id: "agent-1",
+               tenant_id: "payments-prod",
+               config_version: 1
+             })
+
+    assert command_id == queued.command_id
+
+    assert {:ok, %ControlCommand{status: :succeeded, acknowledged_at: %DateTime{}}} =
+             ControlService.ack_command(%{
+               agent_id: "agent-1",
+               tenant_id: "payments-prod",
+               command_id: command_id,
+               success: true
+             })
+
+    assert [
+             %ControlCommand{
+               command_id: ^command_id,
+               status: :succeeded,
+               delivered_at: %DateTime{},
+               acknowledged_at: %DateTime{},
+               last_error: nil
+             }
+           ] = CommandQueue.list_all()
+
+    assert Enum.any?(AuditLog.list(:all), &(&1.action == "command.succeeded"))
   end
 
   test "command queue persists pending commands across process restarts" do

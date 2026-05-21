@@ -218,6 +218,16 @@ defmodule TelemetryFabricControl.HttpControlServer do
     end
   end
 
+  defp route_authorized_request(%{method: "POST", path: "/v1/agents/commands/ack", body: body}) do
+    body
+    |> decode_request()
+    |> ControlService.ack_command()
+    |> case do
+      {:ok, %ControlCommand{} = command} -> response(200, %{command: encode_response(command)})
+      error -> error_response(error)
+    end
+  end
+
   defp route_authorized_request(%{method: "POST", path: "/v1/pipelines", body: body}) do
     body
     |> decode_request()
@@ -342,6 +352,9 @@ defmodule TelemetryFabricControl.HttpControlServer do
       "routes" -> :routes
       "kind" -> :kind
       "reason" -> :reason
+      "command_id" -> :command_id
+      "success" -> :success
+      "error" -> :error
       other -> other
     end
   end
@@ -393,7 +406,9 @@ defmodule TelemetryFabricControl.HttpControlServer do
       kind: command.kind,
       reason: command.reason,
       status: ControlCommand.status(command),
-      delivered_at: format_datetime(ControlCommand.delivered_at(command))
+      delivered_at: format_datetime(ControlCommand.delivered_at(command)),
+      acknowledged_at: format_datetime(ControlCommand.acknowledged_at(command)),
+      last_error: ControlCommand.last_error(command)
     }
   end
 
@@ -414,6 +429,10 @@ defmodule TelemetryFabricControl.HttpControlServer do
 
   defp error_response({:error, {:invalid_integer, field, value}}) do
     response(400, %{error: "invalid_integer", field: field, value: value})
+  end
+
+  defp error_response({:error, {:invalid_boolean, field, value}}) do
+    response(400, %{error: "invalid_boolean", field: field, value: value})
   end
 
   defp error_response({:error, {:unknown_command_kind, kind}}) do

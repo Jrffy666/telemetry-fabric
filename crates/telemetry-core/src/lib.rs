@@ -4,8 +4,8 @@ pub mod routing;
 pub mod telemetry;
 
 pub use config::{
-    ExporterConfig, ExporterProtocol, PipelineConfig, ProcessorConfig, ProcessorKind,
-    ReceiverConfig, ReceiverProtocol, RouteConfig, TenantLimits, TlsConfig,
+    ExporterConfig, ExporterProtocol, ExporterRetryConfig, PipelineConfig, ProcessorConfig,
+    ProcessorKind, ReceiverConfig, ReceiverProtocol, RouteConfig, TenantLimits, TlsConfig,
 };
 pub use error::{PipelineError, TelemetryError};
 pub use routing::Router;

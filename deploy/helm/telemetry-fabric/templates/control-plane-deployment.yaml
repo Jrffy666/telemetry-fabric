@@ -16,6 +16,7 @@ spec:
       labels:
         {{- include "telemetry-fabric.controlPlaneLabels" . | nindent 8 }}
     spec:
+      serviceAccountName: {{ include "telemetry-fabric.controlPlaneServiceAccountName" . }}
       securityContext:
         {{- toYaml .Values.controlPlane.podSecurityContext | nindent 8 }}
       {{- if .Values.controlPlane.databaseUrlSecret.name }}

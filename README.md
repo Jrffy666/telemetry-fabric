@@ -16,6 +16,7 @@ This repository currently contains:
 - A Rust workspace with data-plane core models.
 - A durable segmented disk queue for local buffering.
 - A batch-oriented runtime that only advances queue cursors after successful export.
+- Per-exporter timeout and retry budgets with exponential backoff.
 - Record processors for memory limiting, tenant rate limiting, and sensitive
   attribute redaction.
 - Stdout, file, OTLP/gRPC, OTLP/HTTP protobuf/JSON, and Prometheus Remote Write
@@ -28,7 +29,8 @@ This repository currently contains:
   datapoints.
 - A JSON health endpoint and Prometheus-format `/metrics` for agent self-observability.
 - Durable MVP control commands for config reload, export pause/resume, and
-  drain-before-restart, including delivered-state persistence and audit events.
+  drain-before-restart, including delivered/executed-state persistence and
+  audit events.
 - An Elixir OTP control-plane skeleton.
 - PostgreSQL schema, state-to-row codec, Ecto schemas, Repo wiring, migration
   task, periodic snapshot sync, and an opt-in PostgreSQL-primary control-plane
@@ -43,7 +45,10 @@ This repository currently contains:
 - Deployment and operations scaffolding.
 - Docker Compose, raw Kubernetes, Helm, and systemd deployment examples for the
   agent, plus Docker Compose and Kubernetes/Helm deployment examples for the
-  MVP control-plane HTTP API.
+  MVP control-plane HTTP API. Kubernetes and Helm assets include service
+  accounts, baseline pod security settings, optional NetworkPolicy,
+  PodDisruptionBudget for the control plane, and optional ServiceMonitor
+  scraping.
 
 The Rust crates keep protocol integrations behind stable internal traits so the
 runtime can evolve without changing queue, processor, and routing semantics.

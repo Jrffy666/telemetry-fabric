@@ -52,6 +52,24 @@ pub struct ExporterConfig {
     pub protocol: ExporterProtocol,
     pub endpoint: String,
     pub tls: TlsConfig,
+    pub retry: ExporterRetryConfig,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ExporterRetryConfig {
+    pub max_attempts: usize,
+    pub timeout_ms: u64,
+    pub initial_backoff_ms: u64,
+}
+
+impl Default for ExporterRetryConfig {
+    fn default() -> Self {
+        Self {
+            max_attempts: 3,
+            timeout_ms: 30_000,
+            initial_backoff_ms: 100,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -154,6 +172,7 @@ impl Default for PipelineConfig {
                 protocol: ExporterProtocol::Stdout,
                 endpoint: "stdout://local".to_string(),
                 tls: TlsConfig::disabled(),
+                retry: ExporterRetryConfig::default(),
             }],
             routes: vec![
                 RouteConfig {
@@ -208,6 +227,26 @@ impl PipelineConfig {
             return Err(PipelineError::InvalidConfig(
                 "max_ingest_bytes_per_second must be greater than zero".to_string(),
             ));
+        }
+        for exporter in &self.exporters {
+            if exporter.retry.max_attempts == 0 {
+                return Err(PipelineError::InvalidConfig(format!(
+                    "exporter {} retry.max_attempts must be greater than zero",
+                    exporter.name
+                )));
+            }
+            if exporter.retry.timeout_ms == 0 {
+                return Err(PipelineError::InvalidConfig(format!(
+                    "exporter {} retry.timeout_ms must be greater than zero",
+                    exporter.name
+                )));
+            }
+            if exporter.retry.initial_backoff_ms == 0 {
+                return Err(PipelineError::InvalidConfig(format!(
+                    "exporter {} retry.initial_backoff_ms must be greater than zero",
+                    exporter.name
+                )));
+            }
         }
 
         validate_unique_names(
@@ -310,6 +349,24 @@ mod tests {
             error,
             PipelineError::InvalidConfig(
                 "max_ingest_bytes_per_second must be greater than zero".to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn rejects_invalid_exporter_retry_policy() {
+        let mut config = PipelineConfig::default();
+        config.exporters[0].retry.max_attempts = 0;
+
+        let error = config
+            .validate()
+            .err()
+            .unwrap_or_else(|| PipelineError::InvalidConfig("expected error".to_string()));
+
+        assert_eq!(
+            error,
+            PipelineError::InvalidConfig(
+                "exporter stdout retry.max_attempts must be greater than zero".to_string()
             )
         );
     }

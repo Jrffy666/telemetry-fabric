@@ -78,6 +78,9 @@ For OTLP/HTTP export, set an exporter with `protocol: otlp_http` for protobuf
 or `protocol: otlp_http_json` for JSON in the YAML pipeline. Use `https://`
 endpoints for TLS. Add `tls.ca_file` for private CAs and optional
 `tls.cert_file` / `tls.key_file` for client-certificate auth.
+Exporter failure handling can be tuned per exporter with `retry.max_attempts`,
+`retry.timeout_ms`, and `retry.initial_backoff_ms`; omitted values use the
+runtime defaults.
 
 For OTLP/HTTP receiver TLS in YAML:
 
@@ -203,6 +206,7 @@ Available HTTP endpoints:
 - `POST /v1/agents/config`
 - `POST /v1/agents/status`
 - `POST /v1/agents/commands`
+- `POST /v1/agents/commands/ack`
 - `POST /v1/pipelines`
 - `POST /v1/pipelines/rollback`
 
@@ -221,8 +225,10 @@ Supported command kinds are `reload_config`, `pause_exports`,
 
 Operator commands are durable until an agent heartbeat receives them. Delivery
 marks the stored command as `delivered` with a `delivered_at` timestamp, and the
-PostgreSQL snapshot sync preserves both pending and delivered commands.
-Command enqueue and delivery both append audit events.
+agent then acknowledges command execution as `succeeded` or `failed` through
+`/v1/agents/commands/ack`. PostgreSQL snapshot sync preserves pending,
+delivered, succeeded, and failed commands. Command enqueue, delivery, success,
+and failure append audit events.
 
 Publish a pipeline version:
 
@@ -335,6 +341,7 @@ Apply raw Kubernetes manifests:
 ```bash
 kubectl apply -f deploy/k8s/control-plane.yaml
 kubectl apply -f deploy/k8s/telemetry-agent-daemonset.yaml
+kubectl apply -f deploy/k8s/network-policy.yaml
 ```
 
 Install the Helm chart with the MVP control plane enabled:
@@ -342,3 +349,8 @@ Install the Helm chart with the MVP control plane enabled:
 ```bash
 helm install telemetry-fabric deploy/helm/telemetry-fabric --set controlPlane.enabled=true
 ```
+
+The Helm chart also exposes baseline production hardening switches:
+`agent.serviceAccount`, `controlPlane.serviceAccount`,
+`controlPlane.podDisruptionBudget`, `networkPolicy.enabled`, and
+`serviceMonitor.enabled`.

@@ -14,6 +14,7 @@ spec:
       labels:
         {{- include "telemetry-fabric.labels" . | nindent 8 }}
     spec:
+      serviceAccountName: {{ include "telemetry-fabric.serviceAccountName" . }}
       securityContext:
         {{- toYaml .Values.agent.podSecurityContext | nindent 8 }}
       containers:

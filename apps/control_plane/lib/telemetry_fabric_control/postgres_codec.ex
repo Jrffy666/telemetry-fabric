@@ -55,7 +55,9 @@ defmodule TelemetryFabricControl.PostgresCodec do
       reason: command.reason,
       status: command |> ControlCommand.status() |> Atom.to_string(),
       inserted_at: timestamp(command.inserted_at),
-      delivered_at: timestamp(ControlCommand.delivered_at(command))
+      delivered_at: timestamp(ControlCommand.delivered_at(command)),
+      acknowledged_at: timestamp(ControlCommand.acknowledged_at(command)),
+      last_error: ControlCommand.last_error(command)
     }
   end
 

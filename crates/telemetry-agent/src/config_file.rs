@@ -3,8 +3,9 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
 use telemetry_core::{
-    ExporterConfig, ExporterProtocol, PipelineConfig, ProcessorConfig, ProcessorKind,
-    ReceiverConfig, ReceiverProtocol, RouteConfig, SignalKind, TenantLimits, TlsConfig,
+    ExporterConfig, ExporterProtocol, ExporterRetryConfig, PipelineConfig, ProcessorConfig,
+    ProcessorKind, ReceiverConfig, ReceiverProtocol, RouteConfig, SignalKind, TenantLimits,
+    TlsConfig,
 };
 
 type DynError = Box<dyn std::error::Error + Send + Sync>;
@@ -37,6 +38,14 @@ struct FileExporterConfig {
     protocol: String,
     endpoint: String,
     tls: Option<FileTlsConfig>,
+    retry: Option<FileExporterRetryConfig>,
+}
+
+#[derive(Debug, Deserialize)]
+struct FileExporterRetryConfig {
+    max_attempts: Option<usize>,
+    timeout_ms: Option<u64>,
+    initial_backoff_ms: Option<u64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -143,7 +152,23 @@ impl FileExporterConfig {
             protocol: parse_exporter_protocol(&self.protocol)?,
             endpoint: self.endpoint,
             tls: self.tls.map_or_else(TlsConfig::disabled, Into::into),
+            retry: self
+                .retry
+                .map_or_else(ExporterRetryConfig::default, Into::into),
         })
+    }
+}
+
+impl From<FileExporterRetryConfig> for ExporterRetryConfig {
+    fn from(value: FileExporterRetryConfig) -> Self {
+        let defaults = ExporterRetryConfig::default();
+        Self {
+            max_attempts: value.max_attempts.unwrap_or(defaults.max_attempts),
+            timeout_ms: value.timeout_ms.unwrap_or(defaults.timeout_ms),
+            initial_backoff_ms: value
+                .initial_backoff_ms
+                .unwrap_or(defaults.initial_backoff_ms),
+        }
     }
 }
 
@@ -279,6 +304,10 @@ exporters:
       cert_file: certs/client.pem
       key_file: certs/client-key.pem
       server_name: collector.internal
+    retry:
+      max_attempts: 5
+      timeout_ms: 5000
+      initial_backoff_ms: 25
 routes:
   traces:
     exporters: [stdout]
@@ -308,6 +337,9 @@ limits:
             config.exporters[0].tls.server_name.as_deref(),
             Some("collector.internal")
         );
+        assert_eq!(config.exporters[0].retry.max_attempts, 5);
+        assert_eq!(config.exporters[0].retry.timeout_ms, 5000);
+        assert_eq!(config.exporters[0].retry.initial_backoff_ms, 25);
         assert_eq!(config.routes[0].signal, SignalKind::Trace);
         assert_eq!(config.limits.max_queue_bytes, 1024);
         assert!(
