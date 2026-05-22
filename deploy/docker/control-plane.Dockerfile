@@ -1,7 +1,13 @@
 FROM elixir:1.18-otp-27-slim AS builder
 
-ENV MIX_ENV=prod
+ENV MIX_ENV=prod \
+  SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
 WORKDIR /workspace/apps/control_plane
+
+ARG DEBIAN_FRONTEND=noninteractive
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends ca-certificates \
+  && rm -rf /var/lib/apt/lists/*
 
 RUN mix local.hex --force && mix local.rebar --force
 
@@ -16,6 +22,7 @@ RUN mix compile && mix release
 
 FROM debian:bookworm-slim
 
+ARG DEBIAN_FRONTEND=noninteractive
 RUN apt-get update \
   && apt-get install -y --no-install-recommends ca-certificates curl libstdc++6 ncurses-base openssl \
   && rm -rf /var/lib/apt/lists/* \
