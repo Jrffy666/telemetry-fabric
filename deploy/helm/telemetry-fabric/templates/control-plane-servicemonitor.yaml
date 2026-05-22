@@ -1,0 +1,27 @@
+{{- if and .Values.serviceMonitor.enabled .Values.controlPlane.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "telemetry-fabric.controlPlaneName" . }}
+  {{- if .Values.serviceMonitor.namespace }}
+  namespace: {{ .Values.serviceMonitor.namespace | quote }}
+  {{- end }}
+  labels:
+    {{- include "telemetry-fabric.controlPlaneLabels" . | nindent 4 }}
+    {{- with .Values.serviceMonitor.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "telemetry-fabric.controlPlaneName" . }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  namespaceSelector:
+    matchNames:
+      - {{ .Release.Namespace | quote }}
+  endpoints:
+    - port: http
+      path: /metrics
+      scheme: {{ ternary "https" "http" .Values.controlPlane.tls.enabled | quote }}
+      interval: {{ .Values.serviceMonitor.interval | quote }}
+{{- end }}

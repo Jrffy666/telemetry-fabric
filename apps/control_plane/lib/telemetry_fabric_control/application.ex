@@ -13,6 +13,7 @@ defmodule TelemetryFabricControl.Application do
     children =
       [
         {Registry, keys: :unique, name: TelemetryFabricControl.AgentProcessRegistry},
+        TelemetryFabricControl.HttpMetrics,
         {TelemetryFabricControl.AuditLog,
          storage_path: TelemetryFabricControl.StateFile.path(storage_dir, "audit_log.term")},
         {TelemetryFabricControl.AgentRegistry,

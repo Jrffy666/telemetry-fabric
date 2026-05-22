@@ -10,6 +10,7 @@ Group=telemetry-fabric
 ExecStart=/usr/local/bin/telemetry-agent --otlp-grpc 0.0.0.0:4317 --health-listen 127.0.0.1:13133 --queue-dir /var/lib/telemetry-fabric/queue
 Restart=always
 RestartSec=5
+TimeoutStopSec=35
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true

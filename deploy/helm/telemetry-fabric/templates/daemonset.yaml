@@ -5,6 +5,10 @@ metadata:
   labels:
     {{- include "telemetry-fabric.labels" . | nindent 4 }}
 spec:
+  {{- with .Values.agent.updateStrategy }}
+  updateStrategy:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
   selector:
     matchLabels:
       app.kubernetes.io/name: {{ include "telemetry-fabric.name" . }}
@@ -13,19 +17,53 @@ spec:
     metadata:
       labels:
         {{- include "telemetry-fabric.labels" . | nindent 8 }}
+      {{- if or .Values.agent.podAnnotations .Values.agent.config.inline }}
+      annotations:
+        {{- with .Values.agent.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+        {{- if .Values.agent.config.inline }}
+        checksum/agent-config: {{ .Values.agent.config.inline | sha256sum | quote }}
+        {{- end }}
+      {{- end }}
     spec:
       serviceAccountName: {{ include "telemetry-fabric.serviceAccountName" . }}
+      terminationGracePeriodSeconds: {{ .Values.agent.terminationGracePeriodSeconds }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- if .Values.agent.priorityClassName }}
+      priorityClassName: {{ .Values.agent.priorityClassName | quote }}
+      {{- end }}
       securityContext:
         {{- toYaml .Values.agent.podSecurityContext | nindent 8 }}
+      {{- with .Values.agent.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.agent.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.agent.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       containers:
         - name: agent
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           args:
+            {{- if or .Values.agent.config.inline .Values.agent.config.existingConfigMap }}
+            - "--config"
+            - "{{ .Values.agent.config.mountPath }}/{{ .Values.agent.config.key }}"
+            {{- else }}
             - "--tenant"
             - {{ .Values.agent.tenant | quote }}
             - "--otlp-grpc"
             - {{ .Values.agent.otlpGrpcAddress | quote }}
+            {{- end }}
             - "--health-listen"
             - {{ .Values.agent.healthAddress | quote }}
             {{- if .Values.agent.otlpExportEndpoint }}
@@ -53,11 +91,19 @@ spec:
             {{- end }}
             - "--queue-dir"
             - {{ .Values.agent.queueDir | quote }}
+            - "--shutdown-drain-timeout-ms"
+            - {{ .Values.agent.shutdownDrainTimeoutMs | quote }}
+            {{- with .Values.agent.extraArgs }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
           env:
             - name: POD_NAME
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.name
+            {{- with .Values.agent.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
             {{- if .Values.agent.controlAuthTokenSecret.name }}
             - name: TELEMETRY_FABRIC_CONTROL_AUTH_TOKEN
               valueFrom:
@@ -103,6 +149,11 @@ spec:
               mountPath: /var/lib/telemetry-fabric
             - name: tmp
               mountPath: /tmp
+            {{- if or .Values.agent.config.inline .Values.agent.config.existingConfigMap }}
+            - name: agent-config
+              mountPath: {{ .Values.agent.config.mountPath | quote }}
+              readOnly: true
+            {{- end }}
             {{- if .Values.agent.controlTlsSecret.name }}
             - name: control-tls
               mountPath: {{ .Values.agent.controlTlsSecret.mountPath | quote }}
@@ -111,10 +162,15 @@ spec:
       volumes:
         - name: queue
           hostPath:
-            path: /var/lib/telemetry-fabric
+            path: {{ .Values.agent.queueHostPath | quote }}
             type: DirectoryOrCreate
         - name: tmp
           emptyDir: {}
+        {{- if or .Values.agent.config.inline .Values.agent.config.existingConfigMap }}
+        - name: agent-config
+          configMap:
+            name: {{ default (include "telemetry-fabric.agentConfigMapName" .) .Values.agent.config.existingConfigMap | quote }}
+        {{- end }}
         {{- if .Values.agent.controlTlsSecret.name }}
         - name: control-tls
           secret:

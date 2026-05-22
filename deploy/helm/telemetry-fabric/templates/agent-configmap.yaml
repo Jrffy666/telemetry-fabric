@@ -1,0 +1,11 @@
+{{- if .Values.agent.config.inline }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "telemetry-fabric.agentConfigMapName" . }}
+  labels:
+    {{- include "telemetry-fabric.labels" . | nindent 4 }}
+data:
+  {{ .Values.agent.config.key }}: |
+{{ .Values.agent.config.inline | nindent 4 }}
+{{- end }}

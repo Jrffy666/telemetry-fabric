@@ -9,16 +9,25 @@ defmodule TelemetryFabricControl.HttpControlServer do
 
   use GenServer
 
+  require Logger
+
   alias TelemetryFabricControl.ControlCommand
   alias TelemetryFabricControl.ControlService
   alias TelemetryFabricControl.ControlService.AgentStatusResponse
   alias TelemetryFabricControl.ControlService.ConfigUpdate
   alias TelemetryFabricControl.ControlService.RegisterAgentResponse
+  alias TelemetryFabricControl.HttpMetrics
   alias TelemetryFabricControl.Json
+  alias TelemetryFabricControl.Repo
 
   @read_timeout 5_000
   @max_header_bytes 16 * 1024
   @default_max_body_bytes 1 * 1024 * 1024
+
+  defmodule RequestTooLargeError do
+    @moduledoc false
+    defexception [:message, :method, :path, :request_id]
+  end
 
   def start_link(opts) do
     name = Keyword.get(opts, :name, __MODULE__)
@@ -82,23 +91,61 @@ defmodule TelemetryFabricControl.HttpControlServer do
   end
 
   defp handle_client(transport, socket, security, max_body_bytes) do
-    response =
-      socket
-      |> read_request(transport, max_body_bytes)
-      |> route_request(security)
+    started_at = System.monotonic_time()
 
-    :ok = send_data(transport, socket, response)
-    close(transport, socket)
+    try do
+      response =
+        socket
+        |> read_request(transport, max_body_bytes)
+        |> respond_to_request(security, started_at)
+
+      :ok = send_data(transport, socket, response)
+      close(transport, socket)
+    rescue
+      error in [RequestTooLargeError] ->
+        request = error_request(error)
+
+        response =
+          response(413, %{error: "request_body_too_large", message: error.message})
+          |> put_request_id_header(request.request_id)
+
+        log_request(request, response, started_at)
+        _ = send_data(transport, socket, response)
+        close(transport, socket)
+
+      error in [ArgumentError, KeyError] ->
+        body = %{error: Exception.message(error)}
+        response = response(400, body)
+        log_request(nil, response, started_at)
+        _ = send_data(transport, socket, response)
+        close(transport, socket)
+
+      error ->
+        body = %{error: Exception.message(error)}
+        response = response(500, body)
+        log_request(nil, response, started_at)
+        _ = send_data(transport, socket, response)
+        close(transport, socket)
+    end
+  end
+
+  defp respond_to_request(request, security, started_at) do
+    response =
+      route_request_safely(request, security)
+      |> put_request_id_header(request.request_id)
+
+    log_request(request, response, started_at)
+    response
+  end
+
+  defp route_request_safely(request, security) do
+    route_request(request, security)
   rescue
     error in [ArgumentError, KeyError] ->
-      body = %{error: Exception.message(error)}
-      _ = send_data(transport, socket, response(400, body))
-      close(transport, socket)
+      response(400, %{error: Exception.message(error)})
 
     error ->
-      body = %{error: Exception.message(error)}
-      _ = send_data(transport, socket, response(500, body))
-      close(transport, socket)
+      response(500, %{error: Exception.message(error)})
   end
 
   defp read_request(socket, transport, max_body_bytes) do
@@ -107,10 +154,19 @@ defmodule TelemetryFabricControl.HttpControlServer do
     [method, path, _version] = String.split(request_line, " ", parts: 3)
     headers = parse_headers(header_lines)
     content_length = headers |> Map.get("content-length", "0") |> String.to_integer()
-    if content_length > max_body_bytes, do: raise("request body exceeds maximum size")
+    request_id = request_id(headers)
+
+    if content_length > max_body_bytes do
+      raise RequestTooLargeError,
+        message: "request body exceeds maximum size",
+        method: method,
+        path: path,
+        request_id: request_id
+    end
+
     body = read_body(socket, transport, body, content_length)
 
-    %{method: method, path: path, headers: headers, body: body}
+    %{method: method, path: path, headers: headers, body: body, request_id: request_id}
   end
 
   defp read_until_headers(socket, transport, acc) do
@@ -152,6 +208,82 @@ defmodule TelemetryFabricControl.HttpControlServer do
     end)
   end
 
+  defp request_id(headers) do
+    case Map.get(headers, "x-request-id") do
+      value when is_binary(value) ->
+        value = String.trim(value)
+
+        if valid_request_id?(value) do
+          value
+        else
+          generate_request_id()
+        end
+
+      _ ->
+        generate_request_id()
+    end
+  end
+
+  defp valid_request_id?(value) when is_binary(value) do
+    byte_size(value) > 0 and byte_size(value) <= 128 and
+      not String.contains?(value, ["\r", "\n"])
+  end
+
+  defp generate_request_id do
+    "req-" <> Integer.to_string(System.unique_integer([:positive, :monotonic]), 36)
+  end
+
+  defp put_request_id_header(response, request_id) do
+    [status_line, content_type, content_length, connection | tail] = response
+
+    [
+      status_line,
+      content_type,
+      content_length,
+      "X-Request-Id: #{request_id}\r\n",
+      connection | tail
+    ]
+  end
+
+  defp log_request(request, response, started_at) do
+    duration_us =
+      System.monotonic_time()
+      |> Kernel.-(started_at)
+      |> System.convert_time_unit(:native, :microsecond)
+
+    method = request_field(request, :method)
+    path = request_field(request, :path)
+    request_id = request_field(request, :request_id)
+    status = response_status(response)
+    :ok = HttpMetrics.record_request(method, path, status, duration_us)
+
+    Logger.info(fn ->
+      "http_control_request method=#{method} " <>
+        "path=#{path} status=#{status} " <>
+        "duration_us=#{duration_us} request_id=#{request_id}"
+    end)
+  end
+
+  defp request_field(nil, _field), do: "unknown"
+  defp request_field(request, field), do: Map.get(request, field, "unknown")
+
+  defp error_request(%RequestTooLargeError{} = error) do
+    %{
+      method: error.method || "unknown",
+      path: error.path || "unknown",
+      request_id: error.request_id || "unknown"
+    }
+  end
+
+  defp response_status(["HTTP/1.1 " <> status | _rest]) do
+    case String.split(status, " ", parts: 2) do
+      [code | _] -> String.to_integer(code)
+      _ -> 0
+    end
+  rescue
+    ArgumentError -> 0
+  end
+
   defp route_request(request, security) do
     case authorize(request, security) do
       :ok -> route_authorized_request(request)
@@ -159,9 +291,16 @@ defmodule TelemetryFabricControl.HttpControlServer do
     end
   end
 
-  defp route_authorized_request(%{method: "GET", path: path})
-       when path in ["/healthz", "/readyz"] do
+  defp route_authorized_request(%{method: "GET", path: "/healthz"}) do
     response(200, %{status: "ok"})
+  end
+
+  defp route_authorized_request(%{method: "GET", path: "/readyz"}) do
+    readiness_response()
+  end
+
+  defp route_authorized_request(%{method: "GET", path: "/metrics"}) do
+    text_response(200, "text/plain; version=0.0.4", HttpMetrics.prometheus())
   end
 
   defp route_authorized_request(%{method: "POST", path: "/v1/agents/register", body: body}) do
@@ -250,8 +389,9 @@ defmodule TelemetryFabricControl.HttpControlServer do
 
   defp route_authorized_request(_request), do: response(404, %{error: "not_found"})
 
-  defp authorize(%{method: "GET", path: path}, _security) when path in ["/healthz", "/readyz"],
-    do: :ok
+  defp authorize(%{method: "GET", path: path}, _security)
+       when path in ["/healthz", "/readyz", "/metrics"],
+       do: :ok
 
   defp authorize(%{path: path} = request, security) do
     role =
@@ -444,9 +584,15 @@ defmodule TelemetryFabricControl.HttpControlServer do
   defp response(status, body) do
     payload = Json.encode!(body)
 
+    text_response(status, "application/json", payload)
+  end
+
+  defp text_response(status, content_type, payload) do
+    payload = IO.iodata_to_binary(payload)
+
     [
       "HTTP/1.1 #{status} #{reason(status)}\r\n",
-      "Content-Type: application/json\r\n",
+      "Content-Type: #{content_type}\r\n",
       "Content-Length: #{byte_size(payload)}\r\n",
       "Connection: close\r\n",
       "\r\n",
@@ -459,8 +605,47 @@ defmodule TelemetryFabricControl.HttpControlServer do
   defp reason(401), do: "Unauthorized"
   defp reason(403), do: "Forbidden"
   defp reason(404), do: "Not Found"
+  defp reason(413), do: "Payload Too Large"
+  defp reason(503), do: "Service Unavailable"
   defp reason(500), do: "Internal Server Error"
   defp reason(_), do: "OK"
+
+  defp readiness_response do
+    checks = readiness_checks()
+
+    if Enum.all?(checks, fn {_name, check} -> check.status == "ok" end) do
+      response(200, %{status: "ok", checks: checks})
+    else
+      response(503, %{status: "unready", checks: checks})
+    end
+  end
+
+  defp readiness_checks do
+    %{
+      storage: storage_readiness()
+    }
+  end
+
+  defp storage_readiness do
+    if postgres_configured?() or postgres_primary?() do
+      postgres_readiness()
+    else
+      %{status: "ok", mode: "otp"}
+    end
+  end
+
+  defp postgres_readiness do
+    if Process.whereis(Repo) do
+      case Ecto.Adapters.SQL.query(Repo, "SELECT 1", [], timeout: 1_000) do
+        {:ok, _result} -> %{status: "ok", mode: "postgres"}
+        {:error, reason} -> %{status: "error", mode: "postgres", reason: inspect(reason)}
+      end
+    else
+      %{status: "error", mode: "postgres", reason: "repo_not_started"}
+    end
+  rescue
+    error -> %{status: "error", mode: "postgres", reason: Exception.message(error)}
+  end
 
   defp security_options(opts) do
     %{
@@ -476,6 +661,26 @@ defmodule TelemetryFabricControl.HttpControlServer do
 
   defp blank_to_nil(value) when value in [nil, ""], do: nil
   defp blank_to_nil(value), do: value
+
+  defp postgres_configured? do
+    case System.get_env("TELEMETRY_FABRIC_CONTROL_DATABASE_URL") do
+      nil -> false
+      "" -> false
+      _url -> true
+    end
+  end
+
+  defp postgres_primary? do
+    System.get_env("TELEMETRY_FABRIC_CONTROL_STORAGE") == "postgres" or
+      truthy_env?("TELEMETRY_FABRIC_CONTROL_POSTGRES_PRIMARY")
+  end
+
+  defp truthy_env?(name) do
+    case System.get_env(name) do
+      nil -> false
+      value -> String.downcase(value) in ["1", "true", "on", "yes"]
+    end
+  end
 
   defp listen(port, ip, %{tls_enabled: true} = security) do
     :ok = :ssl.start()

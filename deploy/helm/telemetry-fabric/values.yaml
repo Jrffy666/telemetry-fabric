@@ -3,15 +3,33 @@ image:
   tag: "0.1.0"
   pullPolicy: IfNotPresent
 
+imagePullSecrets: []
+
 agent:
   otlpGrpcAddress: "0.0.0.0:4317"
   healthAddress: "0.0.0.0:13133"
   otlpExportEndpoint: ""
   controlEndpoint: ""
   controlHeartbeatIntervalMs: 5000
+  shutdownDrainTimeoutMs: 30000
+  terminationGracePeriodSeconds: 35
   agentIdFromPodName: true
   queueDir: "/var/lib/telemetry-fabric/queue"
+  queueHostPath: "/var/lib/telemetry-fabric"
   tenant: "default"
+  config:
+    inline: ""
+    existingConfigMap: ""
+    key: pipeline.yaml
+    mountPath: /etc/telemetry-fabric/agent
+  extraArgs: []
+  extraEnv: []
+  podAnnotations: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  priorityClassName: ""
+  updateStrategy: {}
   controlAuthTokenSecret:
     name: ""
     key: token
@@ -50,6 +68,14 @@ controlPlane:
   dataDir: "/var/lib/telemetry-fabric/control-plane"
   postgresSync: "true"
   postgresSyncIntervalMs: 5000
+  terminationGracePeriodSeconds: 30
+  extraEnv: []
+  podAnnotations: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  priorityClassName: ""
+  strategy: {}
   databaseUrlSecret:
     name: ""
     key: database-url

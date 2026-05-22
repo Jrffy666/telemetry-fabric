@@ -37,6 +37,8 @@ This repository currently contains:
   storage mode.
 - HTTP MVP control endpoints for agent registration, heartbeat, config fetch,
   status, command queueing, pipeline publication, and rollback.
+- Control-plane `/healthz`, dependency-aware `/readyz`, request ID propagation,
+  structured HTTP access logs, and Prometheus-format `/metrics`.
 - Bearer-token authorization and optional TLS/mTLS for the control-plane HTTP
   API, plus HTTPS/mTLS support in the agent control client.
 - Versioned pipeline rollback that creates a new latest config version and
@@ -47,8 +49,8 @@ This repository currently contains:
   agent, plus Docker Compose and Kubernetes/Helm deployment examples for the
   MVP control-plane HTTP API. Kubernetes and Helm assets include service
   accounts, baseline pod security settings, optional NetworkPolicy,
-  PodDisruptionBudget for the control plane, and optional ServiceMonitor
-  scraping.
+  PodDisruptionBudget for the control plane, optional ServiceMonitor scraping,
+  agent pipeline ConfigMap wiring, and a production values example.
 
 The Rust crates keep protocol integrations behind stable internal traits so the
 runtime can evolve without changing queue, processor, and routing semantics.
@@ -74,6 +76,7 @@ docs/                   Architecture and operations documentation
 ```bash
 cargo test --workspace
 cargo run -p telemetry-agent -- --self-test
+cargo run -p telemetry-agent -- --check-config --config config/pipeline.example.yaml
 cargo run -p telemetry-agent -- --config config/pipeline.example.yaml --health-listen 127.0.0.1:13133
 cargo run -p telemetry-agent -- --listen 127.0.0.1:4319 --flush-batch-size 128
 cargo run -p telemetry-agent -- --otlp-grpc 127.0.0.1:4317 --flush-batch-size 128

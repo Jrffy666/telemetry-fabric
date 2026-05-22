@@ -1,0 +1,83 @@
+image:
+  repository: registry.example.com/telemetry-fabric/agent
+  tag: "0.1.0"
+  pullPolicy: IfNotPresent
+
+imagePullSecrets:
+  - name: registry-pull-secret
+
+agent:
+  config:
+    existingConfigMap: telemetry-fabric-agent-pipeline
+    key: pipeline.yaml
+  controlAuthTokenSecret:
+    name: telemetry-fabric-agent-token
+    key: token
+  queueHostPath: /var/lib/telemetry-fabric
+  shutdownDrainTimeoutMs: 30000
+  terminationGracePeriodSeconds: 35
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 10%
+  podAnnotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/path: /metrics
+    prometheus.io/port: "13133"
+  tolerations:
+    - operator: Exists
+      effect: NoSchedule
+
+controlPlane:
+  enabled: true
+  storage: postgres
+  image:
+    repository: registry.example.com/telemetry-fabric/control-plane
+    tag: "0.1.0"
+    pullPolicy: IfNotPresent
+  replicas: 2
+  databaseUrlSecret:
+    name: telemetry-fabric-postgres
+    key: database-url
+  auth:
+    agentTokenSecret:
+      name: telemetry-fabric-agent-token
+      key: token
+    operatorTokenSecret:
+      name: telemetry-fabric-operator-token
+      key: token
+  persistence:
+    enabled: true
+    size: 10Gi
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 1
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  resources:
+    requests:
+      cpu: 250m
+      memory: 256Mi
+    limits:
+      cpu: "1"
+      memory: 1Gi
+
+networkPolicy:
+  enabled: true
+
+serviceMonitor:
+  enabled: true
+  interval: 30s
+  labels:
+    release: prometheus
+
+resources:
+  requests:
+    cpu: 200m
+    memory: 256Mi
+  limits:
+    cpu: "1"
+    memory: 1Gi

@@ -14,6 +14,7 @@ defmodule TelemetryFabricControl.HttpControlServerTest do
     CommandQueue.clear()
     AgentRegistry.clear()
     PipelineStore.clear()
+    TelemetryFabricControl.HttpMetrics.clear()
 
     server = start_supervised!({HttpControlServer, host: "127.0.0.1", port: 0})
 
@@ -228,8 +229,77 @@ defmodule TelemetryFabricControl.HttpControlServerTest do
     assert body["error"] == "empty_receivers"
   end
 
+  test "rejects request bodies over the configured limit" do
+    spec =
+      Supervisor.child_spec(
+        {HttpControlServer,
+         [
+           name: :limited_body_http_control_server,
+           host: "127.0.0.1",
+           port: 0,
+           max_body_bytes: 8
+         ]},
+        id: :limited_body_http_control_server
+      )
+
+    server = start_supervised!(spec)
+    port = HttpControlServer.port(server)
+    payload = Json.encode!(%{agent_id: "agent-1", tenant_id: "payments-prod"})
+
+    assert {413, body} =
+             raw_request(
+               port,
+               "POST /v1/agents/register HTTP/1.1\r\nContent-Length: #{byte_size(payload)}\r\n\r\n#{payload}"
+             )
+
+    assert body["error"] == "request_body_too_large"
+  end
+
   test "serves health checks", %{port: port} do
     assert {200, %{"status" => "ok"}} = raw_request(port, "GET /healthz HTTP/1.1\r\n\r\n")
+  end
+
+  test "serves readiness checks", %{port: port} do
+    without_postgres_env()
+
+    assert {200, body} = raw_request(port, "GET /readyz HTTP/1.1\r\n\r\n")
+
+    assert body["status"] == "ok"
+    assert body["checks"]["storage"]["status"] == "ok"
+    assert body["checks"]["storage"]["mode"] == "otp"
+  end
+
+  test "readiness fails when configured postgres is unavailable", %{port: port} do
+    with_env("TELEMETRY_FABRIC_CONTROL_DATABASE_URL", "postgres://missing/missing")
+
+    assert {503, body} = raw_request(port, "GET /readyz HTTP/1.1\r\n\r\n")
+
+    assert body["status"] == "unready"
+    assert body["checks"]["storage"]["status"] == "error"
+    assert body["checks"]["storage"]["mode"] == "postgres"
+  end
+
+  test "serves prometheus metrics", %{port: port} do
+    assert {200, %{"status" => "ok"}} = raw_request(port, "GET /healthz HTTP/1.1\r\n\r\n")
+    Process.sleep(10)
+
+    assert {200, headers, body} = raw_text_request(port, "GET /metrics HTTP/1.1\r\n\r\n")
+
+    assert headers["content-type"] == "text/plain; version=0.0.4"
+    assert body =~ "# TYPE telemetry_fabric_control_http_requests_total counter"
+
+    assert body =~
+             ~s(telemetry_fabric_control_http_requests_total{method="GET",path="/healthz",status="200"} 1)
+  end
+
+  test "echoes request id headers", %{port: port} do
+    assert {200, headers, %{"status" => "ok"}} =
+             raw_request_with_headers(
+               port,
+               "GET /healthz HTTP/1.1\r\nX-Request-Id: req-test-1\r\n\r\n"
+             )
+
+    assert headers["x-request-id"] == "req-test-1"
   end
 
   test "enforces agent and operator bearer tokens" do
@@ -318,10 +388,20 @@ defmodule TelemetryFabricControl.HttpControlServerTest do
   end
 
   defp raw_request(port, request) do
+    {code, _headers, body} = raw_request_with_headers(port, request)
+    {code, body}
+  end
+
+  defp raw_request_with_headers(port, request) do
+    {code, headers, body} = raw_text_request(port, request)
+    {code, headers, Json.decode!(body)}
+  end
+
+  defp raw_text_request(port, request) do
     {:ok, socket} = :gen_tcp.connect({127, 0, 0, 1}, port, [:binary, active: false])
     :ok = :gen_tcp.send(socket, request)
     response = recv_all(socket, "")
-    parse_response(response)
+    parse_text_response(response)
   end
 
   defp recv_all(socket, acc) do
@@ -331,10 +411,42 @@ defmodule TelemetryFabricControl.HttpControlServerTest do
     end
   end
 
-  defp parse_response(response) do
+  defp parse_text_response(response) do
     [head, body] = String.split(response, "\r\n\r\n", parts: 2)
-    ["HTTP/1.1 " <> status | _headers] = String.split(head, "\r\n")
+    ["HTTP/1.1 " <> status | header_lines] = String.split(head, "\r\n")
     [code | _] = String.split(status, " ", parts: 2)
-    {String.to_integer(code), Json.decode!(body)}
+    headers = parse_headers(header_lines)
+    {String.to_integer(code), headers, body}
+  end
+
+  defp parse_headers(header_lines) do
+    Enum.reduce(header_lines, %{}, fn line, headers ->
+      case String.split(line, ":", parts: 2) do
+        [name, value] -> Map.put(headers, String.downcase(String.trim(name)), String.trim(value))
+        _ -> headers
+      end
+    end)
+  end
+
+  defp without_postgres_env do
+    with_env("TELEMETRY_FABRIC_CONTROL_DATABASE_URL", nil)
+    with_env("TELEMETRY_FABRIC_CONTROL_STORAGE", nil)
+    with_env("TELEMETRY_FABRIC_CONTROL_POSTGRES_PRIMARY", nil)
+  end
+
+  defp with_env(name, value) do
+    previous = System.get_env(name)
+
+    on_exit(fn ->
+      case previous do
+        nil -> System.delete_env(name)
+        previous -> System.put_env(name, previous)
+      end
+    end)
+
+    case value do
+      nil -> System.delete_env(name)
+      value -> System.put_env(name, value)
+    end
   end
 end

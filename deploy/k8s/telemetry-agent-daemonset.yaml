@@ -21,6 +21,7 @@ spec:
         app.kubernetes.io/name: telemetry-fabric-agent
     spec:
       serviceAccountName: telemetry-fabric-agent
+      terminationGracePeriodSeconds: 35
       securityContext:
         fsGroup: 65532
         seccompProfile:
@@ -48,6 +49,8 @@ spec:
             - "http://telemetry-fabric-control-plane:4001"
             - "--queue-dir"
             - "/var/lib/telemetry-fabric/queue"
+            - "--shutdown-drain-timeout-ms"
+            - "30000"
           env:
             - name: POD_NAME
               valueFrom:

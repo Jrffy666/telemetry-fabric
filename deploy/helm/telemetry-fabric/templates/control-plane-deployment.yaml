@@ -7,6 +7,10 @@ metadata:
     {{- include "telemetry-fabric.controlPlaneLabels" . | nindent 4 }}
 spec:
   replicas: {{ .Values.controlPlane.replicas }}
+  {{- with .Values.controlPlane.strategy }}
+  strategy:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
   selector:
     matchLabels:
       app.kubernetes.io/name: {{ include "telemetry-fabric.controlPlaneName" . }}
@@ -15,10 +19,34 @@ spec:
     metadata:
       labels:
         {{- include "telemetry-fabric.controlPlaneLabels" . | nindent 8 }}
+      {{- with .Values.controlPlane.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
     spec:
       serviceAccountName: {{ include "telemetry-fabric.controlPlaneServiceAccountName" . }}
+      terminationGracePeriodSeconds: {{ .Values.controlPlane.terminationGracePeriodSeconds }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- if .Values.controlPlane.priorityClassName }}
+      priorityClassName: {{ .Values.controlPlane.priorityClassName | quote }}
+      {{- end }}
       securityContext:
         {{- toYaml .Values.controlPlane.podSecurityContext | nindent 8 }}
+      {{- with .Values.controlPlane.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.controlPlane.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.controlPlane.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       {{- if .Values.controlPlane.databaseUrlSecret.name }}
       initContainers:
         - name: migrate
@@ -56,6 +84,9 @@ spec:
               value: {{ .Values.controlPlane.postgresSync | quote }}
             - name: TELEMETRY_FABRIC_CONTROL_POSTGRES_SYNC_INTERVAL_MS
               value: {{ .Values.controlPlane.postgresSyncIntervalMs | quote }}
+            {{- with .Values.controlPlane.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
             {{- if .Values.controlPlane.databaseUrlSecret.name }}
             - name: TELEMETRY_FABRIC_CONTROL_DATABASE_URL
               valueFrom:

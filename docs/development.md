@@ -26,6 +26,13 @@ Run the agent from a YAML pipeline file:
 cargo run -p telemetry-agent -- --config config/pipeline.example.yaml --health-listen 127.0.0.1:13133
 ```
 
+Validate the resolved pipeline configuration without opening the local queue or
+binding receiver ports:
+
+```bash
+cargo run -p telemetry-agent -- --check-config --config config/pipeline.example.yaml
+```
+
 Flush any records already in the local durable queue:
 
 ```bash
@@ -201,6 +208,7 @@ Available HTTP endpoints:
 
 - `GET /healthz`
 - `GET /readyz`
+- `GET /metrics`
 - `POST /v1/agents/register`
 - `POST /v1/agents/heartbeat`
 - `POST /v1/agents/config`
@@ -209,6 +217,13 @@ Available HTTP endpoints:
 - `POST /v1/agents/commands/ack`
 - `POST /v1/pipelines`
 - `POST /v1/pipelines/rollback`
+
+`/readyz` returns HTTP 200 in the default OTP-backed mode. When PostgreSQL is
+configured, readiness performs a lightweight `SELECT 1` through the configured
+Repo and returns HTTP 503 if the dependency is unavailable. `/metrics` exposes
+Prometheus text metrics for control-plane HTTP request counts and total request
+handling duration. The HTTP adapter also propagates a valid `X-Request-Id`
+header or generates one for each request and includes it in access logs.
 
 Queue an operator command:
 
@@ -350,7 +365,34 @@ Install the Helm chart with the MVP control plane enabled:
 helm install telemetry-fabric deploy/helm/telemetry-fabric --set controlPlane.enabled=true
 ```
 
+Create the agent pipeline ConfigMap and install with the production example
+values:
+
+```bash
+kubectl create configmap telemetry-fabric-agent-pipeline \
+  --from-file=pipeline.yaml=config/pipeline.example.yaml
+
+kubectl create secret generic telemetry-fabric-postgres \
+  --from-literal=database-url='postgres://user:password@postgres:5432/telemetry_fabric'
+kubectl create secret generic telemetry-fabric-agent-token --from-literal=token='agent-token'
+kubectl create secret generic telemetry-fabric-operator-token --from-literal=token='operator-token'
+
+helm upgrade --install telemetry-fabric deploy/helm/telemetry-fabric \
+  -f deploy/helm/telemetry-fabric/values-production.example.yaml
+```
+
+For local experiments, Helm can also inline the pipeline file instead of
+referencing an existing ConfigMap:
+
+```bash
+helm upgrade --install telemetry-fabric deploy/helm/telemetry-fabric \
+  --set controlPlane.enabled=true \
+  --set-file agent.config.inline=config/pipeline.example.yaml
+```
+
 The Helm chart also exposes baseline production hardening switches:
 `agent.serviceAccount`, `controlPlane.serviceAccount`,
-`controlPlane.podDisruptionBudget`, `networkPolicy.enabled`, and
-`serviceMonitor.enabled`.
+`agent.config`, `agent.extraEnv`, `agent.nodeSelector`, `agent.tolerations`,
+`agent.affinity`, `controlPlane.podDisruptionBudget`, `controlPlane.extraEnv`,
+`controlPlane.nodeSelector`, `controlPlane.tolerations`,
+`controlPlane.affinity`, `networkPolicy.enabled`, and `serviceMonitor.enabled`.

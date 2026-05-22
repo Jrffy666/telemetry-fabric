@@ -34,7 +34,9 @@ The current OTP control domain includes:
 - YAML pipeline payload generation with a SHA-256 checksum so a future transport
   adapter can return `ConfigUpdate` messages without changing the domain API.
 - A dependency-free MVP HTTP adapter for local integration and smoke testing,
-  with optional bearer-token authorization and TLS/mTLS.
+  with optional bearer-token authorization, TLS/mTLS, request ID propagation,
+  structured access logs, Prometheus request metrics, and dependency-aware
+  readiness checks.
 
 The production Phoenix API and gRPC transport layer are still future adapters
 and should be built on top of `ControlService` and the PostgreSQL store

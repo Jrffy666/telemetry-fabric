@@ -6,6 +6,10 @@ telemetry-fabric
 {{ include "telemetry-fabric.name" . }}-control-plane
 {{- end -}}
 
+{{- define "telemetry-fabric.agentConfigMapName" -}}
+{{ include "telemetry-fabric.name" . }}-agent-config
+{{- end -}}
+
 {{- define "telemetry-fabric.labels" -}}
 app.kubernetes.io/name: {{ include "telemetry-fabric.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}

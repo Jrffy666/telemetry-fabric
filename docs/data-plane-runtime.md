@@ -104,6 +104,13 @@ controls the maximum records per flush, and `--flush-interval-ms` controls the
 worker cadence. The TCP line receiver accepts clients concurrently, while queue
 mutation and export remain serialized inside the runtime.
 
+When the agent receives SIGINT or SIGTERM in receiver mode, it stops accepting
+new receiver work and drains the durable queue with the shutdown flush path
+before exiting. `--shutdown-drain-timeout-ms` controls the maximum drain window
+and defaults to 30 seconds. If exporters are still unavailable when the timeout
+expires, uncommitted records remain in the durable queue for the next process
+start.
+
 When the OTLP/HTTP receiver is configured from YAML, `tls.enabled: true`
 requires `tls.cert_file` and `tls.key_file`. Set `tls.require_client_auth: true`
 with `tls.ca_file` to require client certificates.

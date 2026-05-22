@@ -17,7 +17,7 @@ use std::env;
 use std::error::Error;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use telemetry_buffer::DiskQueueOptions;
 use telemetry_core::{
     ExporterConfig, ExporterProtocol, ExporterRetryConfig, PipelineConfig, ReceiverProtocol,
@@ -48,6 +48,18 @@ async fn run() -> Result<(), DynError> {
 
     let config = build_pipeline_config(&args)?;
     config.validate()?;
+
+    if args.check_config {
+        println!(
+            "pipeline config valid: tenant={} pipeline={} receivers={} exporters={} routes={}",
+            config.tenant_id,
+            config.name,
+            config.receivers.len(),
+            config.exporters.len(),
+            config.routes.len()
+        );
+        return Ok(());
+    }
 
     let mut runtime =
         AgentRuntime::open(config, args.queue_dir.clone(), DiskQueueOptions::default())?;
@@ -106,22 +118,15 @@ async fn run() -> Result<(), DynError> {
         );
     }
 
-    match receiver_mode {
-        Some(ReceiverMode::TfLine(bind)) => {
-            serve_line_protocol(bind, Arc::clone(&runtime)).await?;
-            return Ok(());
-        }
-        Some(ReceiverMode::OtlpGrpc(bind)) => {
-            let tenant_id = runtime.lock().await.config().tenant_id.clone();
-            serve_otlp_grpc(bind, Arc::clone(&runtime), tenant_id).await?;
-            return Ok(());
-        }
-        Some(ReceiverMode::OtlpHttp { bind, tls }) => {
-            let tenant_id = runtime.lock().await.config().tenant_id.clone();
-            serve_otlp_http(bind, Arc::clone(&runtime), tenant_id, tls).await?;
-            return Ok(());
-        }
-        None => {}
+    if let Some(receiver_mode) = receiver_mode {
+        run_receiver_until_shutdown(
+            receiver_mode,
+            Arc::clone(&runtime),
+            args.flush_batch_size,
+            Duration::from_millis(args.shutdown_drain_timeout_ms),
+        )
+        .await?;
+        return Ok(());
     }
 
     runtime.lock().await.flush_to_stdout(1024).await?;
@@ -342,6 +347,127 @@ fn spawn_control_worker(
     });
 }
 
+async fn run_receiver_until_shutdown(
+    receiver_mode: ReceiverMode,
+    runtime: Arc<Mutex<AgentRuntime>>,
+    flush_batch_size: usize,
+    shutdown_drain_timeout: Duration,
+) -> Result<(), DynError> {
+    match receiver_mode {
+        ReceiverMode::TfLine(bind) => {
+            tokio::select! {
+                result = serve_line_protocol(bind, Arc::clone(&runtime)) => result,
+                signal = wait_for_shutdown_signal() => {
+                    signal?;
+                    drain_for_shutdown(runtime, flush_batch_size, shutdown_drain_timeout).await
+                }
+            }
+        }
+        ReceiverMode::OtlpGrpc(bind) => {
+            let tenant_id = runtime.lock().await.config().tenant_id.clone();
+            tokio::select! {
+                result = serve_otlp_grpc(bind, Arc::clone(&runtime), tenant_id) => result,
+                signal = wait_for_shutdown_signal() => {
+                    signal?;
+                    drain_for_shutdown(runtime, flush_batch_size, shutdown_drain_timeout).await
+                }
+            }
+        }
+        ReceiverMode::OtlpHttp { bind, tls } => {
+            let tenant_id = runtime.lock().await.config().tenant_id.clone();
+            tokio::select! {
+                result = serve_otlp_http(bind, Arc::clone(&runtime), tenant_id, tls) => result,
+                signal = wait_for_shutdown_signal() => {
+                    signal?;
+                    drain_for_shutdown(runtime, flush_batch_size, shutdown_drain_timeout).await
+                }
+            }
+        }
+    }
+}
+
+async fn wait_for_shutdown_signal() -> Result<(), DynError> {
+    #[cfg(unix)]
+    {
+        let mut terminate =
+            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
+        tokio::select! {
+            result = tokio::signal::ctrl_c() => result?,
+            _ = terminate.recv() => {}
+        }
+    }
+
+    #[cfg(not(unix))]
+    {
+        tokio::signal::ctrl_c().await?;
+    }
+
+    Ok(())
+}
+
+async fn drain_for_shutdown(
+    runtime: Arc<Mutex<AgentRuntime>>,
+    batch_size: usize,
+    timeout: Duration,
+) -> Result<(), DynError> {
+    println!(
+        "shutdown signal received: draining queued records for up to {} ms",
+        timeout.as_millis()
+    );
+    let deadline = Instant::now() + timeout;
+
+    loop {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            log_shutdown_drain_timeout(&runtime).await;
+            return Ok(());
+        }
+
+        match tokio::time::timeout(
+            remaining,
+            AgentRuntime::flush_for_shutdown_shared(Arc::clone(&runtime), batch_size),
+        )
+        .await
+        {
+            Ok(Ok(report)) if report.drained_records == 0 => {
+                println!("shutdown drain completed: queue empty");
+                return Ok(());
+            }
+            Ok(Ok(report)) => {
+                println!(
+                    "shutdown drain progress: drained={} exported={} dropped={} bytes={}",
+                    report.drained_records,
+                    report.exported_records,
+                    report.dropped_records,
+                    report.exported_bytes
+                );
+            }
+            Ok(Err(err)) => {
+                eprintln!(
+                    "shutdown drain stopped after flush failure; queued records remain durable: {err}"
+                );
+                return Ok(());
+            }
+            Err(_) => {
+                log_shutdown_drain_timeout(&runtime).await;
+                return Ok(());
+            }
+        }
+
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+}
+
+async fn log_shutdown_drain_timeout(runtime: &Arc<Mutex<AgentRuntime>>) {
+    match runtime.lock().await.health() {
+        Ok(health) => eprintln!(
+            "shutdown drain timeout reached: queued_bytes={} cursor={}:{}",
+            health.queued_bytes, health.cursor_segment_id, health.cursor_offset
+        ),
+        Err(err) => eprintln!("shutdown drain timeout reached; queue health unavailable: {err}"),
+    }
+}
+
 async fn drain_and_exit(
     runtime: &Arc<Mutex<AgentRuntime>>,
     batch_size: usize,
@@ -542,6 +668,8 @@ struct Args {
     flush_batch_size: usize,
     flush_interval_ms: u64,
     control_heartbeat_interval_ms: u64,
+    shutdown_drain_timeout_ms: u64,
+    check_config: bool,
     self_test: bool,
     help: bool,
 }
@@ -567,6 +695,8 @@ impl Args {
             flush_batch_size: 128,
             flush_interval_ms: 1000,
             control_heartbeat_interval_ms: 5000,
+            shutdown_drain_timeout_ms: 30_000,
+            check_config: false,
             self_test: false,
             help: false,
         };
@@ -636,8 +766,17 @@ impl Args {
                         "--control-heartbeat-interval-ms",
                     )?)?;
                 }
+                "--shutdown-drain-timeout-ms" => {
+                    args.shutdown_drain_timeout_ms = parse_positive_u64(&next_value(
+                        &mut values,
+                        "--shutdown-drain-timeout-ms",
+                    )?)?;
+                }
                 "--self-test" => {
                     args.self_test = true;
+                }
+                "--check-config" => {
+                    args.check_config = true;
                 }
                 "--help" | "-h" => {
                     args.help = true;
@@ -865,6 +1004,8 @@ fn print_help() {
            --flush-batch-size N Flush up to N queued records per background cycle.\n\
            --flush-interval-ms N Background flush interval in milliseconds.\n\
            --control-heartbeat-interval-ms N Control-plane heartbeat interval in milliseconds.\n\
+           --shutdown-drain-timeout-ms N Maximum time to drain queued records after SIGINT/SIGTERM.\n\
+           --check-config     Validate the resolved pipeline configuration and exit.\n\
            --self-test         Enqueue and flush one synthetic record.\n"
     );
 }
@@ -894,6 +1035,9 @@ mod tests {
                 "64",
                 "--control-heartbeat-interval-ms",
                 "2500",
+                "--shutdown-drain-timeout-ms",
+                "15000",
+                "--check-config",
             ]
             .into_iter()
             .map(String::from),
@@ -914,6 +1058,8 @@ mod tests {
         assert_eq!(args.agent_id, Some("agent-1".to_string()));
         assert_eq!(args.flush_batch_size, 64);
         assert_eq!(args.control_heartbeat_interval_ms, 2500);
+        assert_eq!(args.shutdown_drain_timeout_ms, 15_000);
+        assert!(args.check_config);
         Ok(())
     }
 
