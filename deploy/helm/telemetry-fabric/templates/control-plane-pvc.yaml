@@ -1,4 +1,4 @@
-{{- if and .Values.controlPlane.enabled .Values.controlPlane.persistence.enabled }}
+{{- if and .Values.controlPlane.enabled .Values.controlPlane.persistence.enabled (ne .Values.controlPlane.storage "postgres") }}
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:

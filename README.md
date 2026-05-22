@@ -51,6 +51,10 @@ This repository currently contains:
   accounts, baseline pod security settings, optional NetworkPolicy,
   PodDisruptionBudget for the control plane, optional ServiceMonitor scraping,
   agent pipeline ConfigMap wiring, and a production values example.
+- CI coverage for Rust, Elixir, Docker image builds, Helm rendering, and a
+  Docker Compose smoke test, plus scheduled dependency/security scanning and a
+  tag-driven container release workflow with SBOM/provenance output and image
+  signing.
 
 The Rust crates keep protocol integrations behind stable internal traits so the
 runtime can evolve without changing queue, processor, and routing semantics.
@@ -119,3 +123,9 @@ docker compose -f deploy/docker/docker-compose.yml up --build
 The compose stack starts PostgreSQL, the MVP HTTP control plane on `:4001`, and
 an agent that heartbeats to the control plane while receiving OTLP/gRPC on
 `:4317`.
+
+Run the CI smoke test locally with:
+
+```bash
+make docker-smoke
+```

@@ -1,4 +1,4 @@
-.PHONY: test rust-test elixir-test agent-self-test
+.PHONY: test rust-test elixir-test agent-self-test docker-smoke
 
 test: rust-test elixir-test
 
@@ -10,3 +10,6 @@ agent-self-test:
 
 elixir-test:
 	cd apps/control_plane && mix test
+
+docker-smoke:
+	bash scripts/ci_smoke_compose.sh

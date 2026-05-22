@@ -47,11 +47,20 @@ controlPlane:
       name: telemetry-fabric-operator-token
       key: token
   persistence:
-    enabled: true
+    enabled: false
     size: 10Gi
   podDisruptionBudget:
     enabled: true
     minAvailable: 1
+  affinity:
+    podAntiAffinity:
+      preferredDuringSchedulingIgnoredDuringExecution:
+        - weight: 100
+          podAffinityTerm:
+            labelSelector:
+              matchLabels:
+                app.kubernetes.io/name: telemetry-fabric-control-plane
+            topologyKey: kubernetes.io/hostname
   strategy:
     type: RollingUpdate
     rollingUpdate:

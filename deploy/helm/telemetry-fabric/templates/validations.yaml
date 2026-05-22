@@ -1,0 +1,21 @@
+{{- if .Values.controlPlane.enabled -}}
+{{- $storage := default "otp" .Values.controlPlane.storage -}}
+{{- if not (has $storage (list "otp" "postgres")) -}}
+{{- fail "controlPlane.storage must be one of: otp, postgres" -}}
+{{- end -}}
+{{- if and (ne $storage "postgres") (gt (int .Values.controlPlane.replicas) 1) -}}
+{{- fail "controlPlane.replicas > 1 requires controlPlane.storage=postgres; OTP/file-backed storage is single-writer only" -}}
+{{- end -}}
+{{- if and (eq $storage "postgres") (not .Values.controlPlane.databaseUrlSecret.name) -}}
+{{- fail "controlPlane.storage=postgres requires controlPlane.databaseUrlSecret.name" -}}
+{{- end -}}
+{{- if and .Values.controlPlane.tls.enabled (not .Values.controlPlane.tls.secretName) -}}
+{{- fail "controlPlane.tls.enabled=true requires controlPlane.tls.secretName" -}}
+{{- end -}}
+{{- if and .Values.controlPlane.tls.requireClientAuth (not .Values.controlPlane.tls.enabled) -}}
+{{- fail "controlPlane.tls.requireClientAuth=true requires controlPlane.tls.enabled=true" -}}
+{{- end -}}
+{{- if and .Values.controlPlane.tls.requireClientAuth (not .Values.controlPlane.tls.secretName) -}}
+{{- fail "controlPlane mTLS requires controlPlane.tls.secretName with ca.crt, tls.crt, and tls.key" -}}
+{{- end -}}
+{{- end -}}

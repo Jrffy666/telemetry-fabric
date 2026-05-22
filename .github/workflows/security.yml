@@ -1,0 +1,36 @@
+name: Security
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+  schedule:
+    - cron: "19 3 * * 1"
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  dependency-and-vulnerability-scan:
+    name: Dependency and Vulnerability Scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: rustsec/audit-check@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: aquasecurity/trivy-action@0.32.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          format: sarif
+          output: trivy-results.sarif
+          exit-code: "1"
+      - uses: github/codeql-action/upload-sarif@v3
+        if: always() && github.event_name != 'pull_request' && hashFiles('trivy-results.sarif') != ''
+        with:
+          sarif_file: trivy-results.sarif

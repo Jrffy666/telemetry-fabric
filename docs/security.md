@@ -25,6 +25,10 @@ Implemented or represented:
   control endpoints with custom CA and optional client certificates.
 - PostgreSQL-primary control-plane storage mode with
   `TELEMETRY_FABRIC_CONTROL_STORAGE=postgres`.
+- Scheduled GitHub Actions dependency and vulnerability scanning for Rust
+  advisories and high/critical Trivy findings.
+- Tag-driven container release automation with image provenance, SBOM output,
+  and keyless cosign signing for published GHCR images.
 
 ## Production Requirements
 

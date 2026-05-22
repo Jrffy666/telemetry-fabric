@@ -351,6 +351,17 @@ docker build -f deploy/docker/telemetry-agent.Dockerfile -t telemetry-fabric/age
 docker build -f deploy/docker/control-plane.Dockerfile -t telemetry-fabric/control-plane:0.1.0 .
 ```
 
+Run the same Docker Compose smoke test used by CI:
+
+```bash
+bash scripts/ci_smoke_compose.sh
+```
+
+The smoke test builds the compose stack, waits for control-plane and agent
+readiness, registers a test agent, queues an operator command, verifies
+heartbeat delivery, scrapes control-plane and agent metrics, and tears the
+stack down.
+
 Apply raw Kubernetes manifests:
 
 ```bash
@@ -396,3 +407,25 @@ The Helm chart also exposes baseline production hardening switches:
 `agent.affinity`, `controlPlane.podDisruptionBudget`, `controlPlane.extraEnv`,
 `controlPlane.nodeSelector`, `controlPlane.tolerations`,
 `controlPlane.affinity`, `networkPolicy.enabled`, and `serviceMonitor.enabled`.
+
+For the control plane, Helm enforces the storage topology:
+
+- `controlPlane.storage=otp` is file-backed and must run as a single replica.
+- `controlPlane.storage=postgres` requires `controlPlane.databaseUrlSecret.name`
+  and may run multiple replicas.
+- In Postgres-primary mode, the pod data directory is mounted as `emptyDir`
+  because PostgreSQL is the source of truth; PVC persistence is only used for
+  the file-backed OTP mode.
+
+## Release And Security Automation
+
+The default CI workflow runs Rust formatting, clippy, unit tests, Elixir tests,
+PostgreSQL integration tests, Docker image builds, Docker Compose smoke tests,
+and Helm validation.
+
+The security workflow runs weekly and on pushes/PRs. It checks Rust advisories
+and scans the repository with Trivy for high and critical vulnerabilities.
+
+Pushing a `vX.Y.Z` tag runs the release workflow, builds multi-architecture
+agent and control-plane images for GHCR, emits build provenance and SBOM data,
+and signs the published image digests with keyless cosign.

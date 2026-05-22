@@ -165,7 +165,7 @@ spec:
             {{- end }}
       volumes:
         - name: data
-          {{- if .Values.controlPlane.persistence.enabled }}
+          {{- if and .Values.controlPlane.persistence.enabled (ne .Values.controlPlane.storage "postgres") }}
           persistentVolumeClaim:
             claimName: {{ include "telemetry-fabric.controlPlaneName" . }}-data
           {{- else }}

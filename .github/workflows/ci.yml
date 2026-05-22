@@ -61,6 +61,15 @@ jobs:
       - run: docker compose -f deploy/docker/docker-compose.yml config
       - run: docker build -f deploy/docker/telemetry-agent.Dockerfile -t telemetry-fabric/agent:ci .
       - run: docker build -f deploy/docker/control-plane.Dockerfile -t telemetry-fabric/control-plane:ci .
+      - run: bash scripts/ci_smoke_compose.sh
+        timeout-minutes: 8
       - uses: azure/setup-helm@v4
       - run: helm lint deploy/helm/telemetry-fabric
+      - run: helm lint deploy/helm/telemetry-fabric -f deploy/helm/telemetry-fabric/values-production.example.yaml
       - run: helm template telemetry-fabric deploy/helm/telemetry-fabric --set controlPlane.enabled=true
+      - run: helm template telemetry-fabric deploy/helm/telemetry-fabric -f deploy/helm/telemetry-fabric/values-production.example.yaml
+      - run: |
+          if helm template telemetry-fabric deploy/helm/telemetry-fabric --set controlPlane.enabled=true --set controlPlane.replicas=2; then
+            echo "expected Helm validation to reject multi-replica OTP storage"
+            exit 1
+          fi
