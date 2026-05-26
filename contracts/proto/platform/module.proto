@@ -1,0 +1,18 @@
+syntax = "proto3";
+
+package telemetry.fabric.platform.v1;
+
+// Module identifies the logical platform or domain module that produced an
+// event. Keep this list stable; use source for instance-level identity.
+enum Module {
+  MODULE_UNSPECIFIED = 0;
+  MODULE_PLATFORM = 1;
+  MODULE_BLOCKCHAIN = 2;
+  MODULE_INGEST = 3;
+  MODULE_FILTER = 4;
+  MODULE_ROUTER = 5;
+  MODULE_STORAGE = 6;
+  MODULE_ALERTING = 7;
+  MODULE_CONTROL_PLANE = 8;
+  MODULE_AGENT = 9;
+}

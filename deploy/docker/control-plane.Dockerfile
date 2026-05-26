@@ -39,6 +39,8 @@ RUN mkdir -p /var/lib/telemetry-fabric/control-plane \
 
 USER telemetry-fabric
 EXPOSE 4001
+HEALTHCHECK --interval=30s --timeout=3s --start-period=20s --retries=3 \
+  CMD curl -fsS http://127.0.0.1:4001/readyz >/dev/null || exit 1
 
 ENTRYPOINT ["/opt/telemetry-fabric-control/bin/telemetry_fabric_control"]
 CMD ["start"]

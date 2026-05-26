@@ -1,0 +1,31 @@
+groups:
+  - name: telemetry-fabric.kafka
+    interval: 30s
+    rules:
+      - record: crawler:kafka_consumer_lag:max
+        expr: max by (cluster, namespace, topic, consumergroup) (kafka_consumergroup_lag) or max by (cluster, namespace, topic, consumergroup) (kafka_consumergroup_lag_sum)
+
+      - record: crawler:kafka_queue_depth:max
+        expr: max by (cluster, namespace, topic, queue) (crawler_queue_depth) or max by (cluster, namespace, topic) (kafka_topic_partition_current_offset - kafka_consumergroup_current_offset)
+
+      - alert: KafkaLagHigh
+        expr: crawler:kafka_consumer_lag:max > 10000
+        for: 10m
+        labels:
+          severity: warning
+          service: kafka
+        annotations:
+          summary: "Kafka consumer lag is high"
+          description: "Consumer group {{ $labels.consumergroup }} has high lag on topic {{ $labels.topic }}."
+          runbook_url: "https://runbooks.example.com/telemetry-fabric/kafka-lag"
+
+      - alert: KafkaQueueDepthHigh
+        expr: crawler:kafka_queue_depth:max > 100000
+        for: 10m
+        labels:
+          severity: warning
+          service: kafka
+        annotations:
+          summary: "Kafka queue depth is high"
+          description: "Kafka queue depth for topic {{ $labels.topic }} is above the expected operating range."
+          runbook_url: "https://runbooks.example.com/telemetry-fabric/kafka-queue-depth"

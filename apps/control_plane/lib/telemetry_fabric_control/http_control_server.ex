@@ -18,6 +18,10 @@ defmodule TelemetryFabricControl.HttpControlServer do
   alias TelemetryFabricControl.ControlService.RegisterAgentResponse
   alias TelemetryFabricControl.HttpMetrics
   alias TelemetryFabricControl.Json
+  alias TelemetryFabricControl.Modules.Blockchain.Control, as: BlockchainControl
+  alias TelemetryFabricControl.Modules.Control, as: ModuleControl
+  alias TelemetryFabricControl.Modules.ModuleConfigVersion
+  alias TelemetryFabricControl.Modules.ModuleRegistration
   alias TelemetryFabricControl.Repo
 
   @read_timeout 5_000
@@ -45,13 +49,16 @@ defmodule TelemetryFabricControl.HttpControlServer do
     ip = parse_ip!(host)
     security = security_options(opts)
     max_body_bytes = Keyword.get(opts, :max_body_bytes, @default_max_body_bytes)
+    rate_limit = rate_limit_options(opts)
 
     {:ok, transport, socket} = listen(port, ip, security)
 
     {:ok, actual_port} = bound_port(transport, socket)
 
     {:ok, acceptor} =
-      Task.start_link(fn -> accept_loop(socket, transport, security, max_body_bytes) end)
+      Task.start_link(fn ->
+        accept_loop(socket, transport, security, max_body_bytes, rate_limit)
+      end)
 
     {:ok,
      %{
@@ -61,7 +68,8 @@ defmodule TelemetryFabricControl.HttpControlServer do
        host: host,
        port: actual_port,
        security: security,
-       max_body_bytes: max_body_bytes
+       max_body_bytes: max_body_bytes,
+       rate_limit: rate_limit
      }}
   end
 
@@ -76,28 +84,31 @@ defmodule TelemetryFabricControl.HttpControlServer do
     :ok
   end
 
-  defp accept_loop(socket, transport, security, max_body_bytes) do
+  defp accept_loop(socket, transport, security, max_body_bytes, rate_limit) do
     case accept(transport, socket) do
       {:ok, client} ->
-        Task.start(fn -> handle_client(transport, client, security, max_body_bytes) end)
-        accept_loop(socket, transport, security, max_body_bytes)
+        Task.start(fn ->
+          handle_client(transport, client, security, max_body_bytes, rate_limit)
+        end)
+
+        accept_loop(socket, transport, security, max_body_bytes, rate_limit)
 
       {:error, :closed} ->
         :ok
 
       {:error, _reason} ->
-        accept_loop(socket, transport, security, max_body_bytes)
+        accept_loop(socket, transport, security, max_body_bytes, rate_limit)
     end
   end
 
-  defp handle_client(transport, socket, security, max_body_bytes) do
+  defp handle_client(transport, socket, security, max_body_bytes, rate_limit) do
     started_at = System.monotonic_time()
 
     try do
       response =
         socket
         |> read_request(transport, max_body_bytes)
-        |> respond_to_request(security, started_at)
+        |> respond_to_request(security, rate_limit, started_at)
 
       :ok = send_data(transport, socket, response)
       close(transport, socket)
@@ -129,17 +140,17 @@ defmodule TelemetryFabricControl.HttpControlServer do
     end
   end
 
-  defp respond_to_request(request, security, started_at) do
+  defp respond_to_request(request, security, rate_limit, started_at) do
     response =
-      route_request_safely(request, security)
+      route_request_safely(request, security, rate_limit)
       |> put_request_id_header(request.request_id)
 
     log_request(request, response, started_at)
     response
   end
 
-  defp route_request_safely(request, security) do
-    route_request(request, security)
+  defp route_request_safely(request, security, rate_limit) do
+    route_request(request, security, rate_limit)
   rescue
     error in [ArgumentError, KeyError] ->
       response(400, %{error: Exception.message(error)})
@@ -284,9 +295,12 @@ defmodule TelemetryFabricControl.HttpControlServer do
     ArgumentError -> 0
   end
 
-  defp route_request(request, security) do
-    case authorize(request, security) do
-      :ok -> route_authorized_request(request)
+  defp route_request(request, security, rate_limit) do
+    with :ok <- check_rate_limit(request, rate_limit),
+         {:ok, role} <- authorize(request, security),
+         :ok <- authorize_rbac(role, request) do
+      route_authorized_request(request)
+    else
       {:error, status, body} -> response(status, body)
     end
   end
@@ -387,22 +401,44 @@ defmodule TelemetryFabricControl.HttpControlServer do
     end
   end
 
-  defp route_authorized_request(_request), do: response(404, %{error: "not_found"})
+  defp route_authorized_request(request), do: route_module_request(request)
 
   defp authorize(%{method: "GET", path: path}, _security)
        when path in ["/healthz", "/readyz", "/metrics"],
-       do: :ok
+       do: {:ok, :public}
 
   defp authorize(%{path: path} = request, security) do
-    role =
-      if path in ["/v1/agents/commands", "/v1/pipelines", "/v1/pipelines/rollback"] do
-        :operator
-      else
-        :agent
-      end
+    path = path_without_query(path)
+    role = required_role(request, path)
 
-    authorize_role(request, security, role)
+    with :ok <- authorize_role(request, security, role) do
+      {:ok, role}
+    end
   end
+
+  defp required_role(request, path) do
+    cond do
+      path in ["/v1/agents/commands", "/v1/pipelines", "/v1/pipelines/rollback"] ->
+        :operator
+
+      path == "/v1/modules/configs/fetch" ->
+        :agent
+
+      request.method == "GET" and
+          String.starts_with?(path, "/v1/modules/blockchain/checkpoints") ->
+        :agent
+
+      String.starts_with?(path, "/v1/modules") ->
+        :operator
+
+      true ->
+        :agent
+    end
+  end
+
+  defp authorize_rbac(:public, _request), do: :ok
+  defp authorize_rbac(:agent, _request), do: :ok
+  defp authorize_rbac(:operator, _request), do: :ok
 
   defp authorize_role(request, security, :agent) do
     token = bearer_token(request.headers)
@@ -563,9 +599,404 @@ defmodule TelemetryFabricControl.HttpControlServer do
     }
   end
 
+  defp route_module_request(%{method: "GET", path: path}) do
+    case path_segments(path) do
+      ["v1", "modules"] ->
+        response(200, %{modules: Enum.map(ModuleControl.list_modules(), &encode_module/1)})
+
+      ["v1", "modules", "blockchain", "checkpoints"] ->
+        opts = pagination_opts(path)
+
+        with {:ok, records} <-
+               BlockchainControl.list_checkpoints(query_param(path, "tenant_id"), opts) do
+          response(200, %{checkpoints: records, pagination: pagination_response(records, opts)})
+        else
+          error -> error_response(error)
+        end
+
+      ["v1", "modules", "blockchain", "checkpoints", assignment_id] ->
+        with {:ok, record} <-
+               BlockchainControl.get_checkpoint(query_param(path, "tenant_id"), assignment_id) do
+          response(200, %{checkpoint: record})
+        else
+          error -> error_response(error)
+        end
+
+      ["v1", "modules", "blockchain", resource_name] ->
+        opts = pagination_opts(path)
+
+        with {:ok, resource} <- blockchain_resource(resource_name),
+             {:ok, records} <- resource.list.(query_param(path, "tenant_id"), opts) do
+          response(200, %{
+            resource.list_key => records,
+            pagination: pagination_response(records, opts)
+          })
+        else
+          error -> error_response(error)
+        end
+
+      ["v1", "modules", "blockchain", resource_name, id] ->
+        with {:ok, resource} <- blockchain_resource(resource_name),
+             {:ok, record} <- resource.get.(query_param(path, "tenant_id"), id) do
+          response(200, %{resource.item_key => record})
+        else
+          error -> error_response(error)
+        end
+
+      _ ->
+        response(404, %{error: "not_found"})
+    end
+  end
+
+  defp route_module_request(%{method: "POST", path: "/v1/modules", body: body}) do
+    body
+    |> decode_request()
+    |> ModuleControl.register_module()
+    |> case do
+      {:ok, registration} -> response(200, %{module: encode_module(registration)})
+      error -> error_response(error)
+    end
+  end
+
+  defp route_module_request(%{method: "POST", path: "/v1/modules/configs/validate", body: body}) do
+    body
+    |> decode_request()
+    |> ModuleControl.validate_config()
+    |> case do
+      {:ok, plan} -> response(200, %{validation: encode_config_plan(plan)})
+      error -> error_response(error)
+    end
+  end
+
+  defp route_module_request(%{method: "POST", path: "/v1/modules/configs/dry-run", body: body}) do
+    body
+    |> decode_request()
+    |> ModuleControl.dry_run_config()
+    |> case do
+      {:ok, plan} -> response(200, %{dry_run: encode_config_plan(plan)})
+      error -> error_response(error)
+    end
+  end
+
+  defp route_module_request(%{method: "POST", path: "/v1/modules/configs/diff", body: body}) do
+    body
+    |> decode_request()
+    |> ModuleControl.diff_config()
+    |> case do
+      {:ok, diff} -> response(200, %{diff: diff})
+      error -> error_response(error)
+    end
+  end
+
+  defp route_module_request(%{method: "POST", path: "/v1/modules/configs/publish", body: body}) do
+    body
+    |> decode_request()
+    |> ModuleControl.publish_config()
+    |> case do
+      {:ok, version} -> response(200, %{config: encode_module_config(version)})
+      error -> error_response(error)
+    end
+  end
+
+  defp route_module_request(%{method: "POST", path: "/v1/modules/configs/rollout", body: body}) do
+    body
+    |> decode_request()
+    |> ModuleControl.rollout_config()
+    |> case do
+      {:ok, version} -> response(200, %{config: encode_module_config(version)})
+      error -> error_response(error)
+    end
+  end
+
+  defp route_module_request(%{method: "POST", path: "/v1/modules/configs/fetch", body: body}) do
+    body
+    |> decode_request()
+    |> ModuleControl.fetch_config()
+    |> case do
+      {:ok, :up_to_date} -> response(200, %{update: nil})
+      {:ok, version} -> response(200, %{update: encode_module_config(version)})
+      error -> error_response(error)
+    end
+  end
+
+  defp route_module_request(%{method: "POST", path: "/v1/modules/configs/rollback", body: body}) do
+    body
+    |> decode_request()
+    |> ModuleControl.rollback_config()
+    |> case do
+      {:ok, version} -> response(200, %{config: encode_module_config(version)})
+      error -> error_response(error)
+    end
+  end
+
+  defp route_module_request(%{method: method, path: path, body: body})
+       when method in ["POST", "PUT"] do
+    case path_segments(path) do
+      ["v1", "modules", "blockchain", resource_name] ->
+        upsert_blockchain_resource(resource_name, nil, body)
+
+      ["v1", "modules", "blockchain", resource_name, id] ->
+        upsert_blockchain_resource(resource_name, id, body)
+
+      _ ->
+        response(404, %{error: "not_found"})
+    end
+  end
+
+  defp route_module_request(%{method: "DELETE", path: path}) do
+    case path_segments(path) do
+      ["v1", "modules", "blockchain", resource_name, id] ->
+        with {:ok, resource} <- blockchain_resource(resource_name),
+             :ok <-
+               resource.delete.(
+                 query_param(path, "tenant_id"),
+                 id,
+                 query_param(path, "actor", "operator")
+               ) do
+          response(200, %{deleted: true})
+        else
+          error -> error_response(error)
+        end
+
+      _ ->
+        response(404, %{error: "not_found"})
+    end
+  end
+
+  defp route_module_request(_request), do: response(404, %{error: "not_found"})
+
+  defp upsert_blockchain_resource(resource_name, id, body) do
+    attrs = decode_request(body)
+
+    with {:ok, resource} <- blockchain_resource(resource_name),
+         {:ok, attrs} <- maybe_put_id(attrs, resource.id_field, id),
+         {:ok, record} <-
+           resource.upsert.(attrs, Map.get(attrs, :actor, Map.get(attrs, "actor", "operator"))) do
+      response(200, %{resource.item_key => record})
+    else
+      error -> error_response(error)
+    end
+  end
+
+  defp maybe_put_id(attrs, _id_field, nil), do: {:ok, attrs}
+
+  defp maybe_put_id(attrs, id_field, id) do
+    string_field = Atom.to_string(id_field)
+
+    case Map.get(attrs, id_field) || Map.get(attrs, string_field) do
+      nil -> {:ok, Map.put(attrs, id_field, id)}
+      ^id -> {:ok, attrs}
+      actual -> {:error, {:path_id_mismatch, id_field, id, actual}}
+    end
+  end
+
+  defp blockchain_resource("chains") do
+    {:ok,
+     %{
+       id_field: :chain_key,
+       item_key: :chain,
+       list_key: :chains,
+       list: &BlockchainControl.list_chains/2,
+       get: &BlockchainControl.get_chain/2,
+       upsert: &BlockchainControl.upsert_chain/2,
+       delete: &BlockchainControl.delete_chain/3
+     }}
+  end
+
+  defp blockchain_resource("rpc-endpoints") do
+    {:ok,
+     %{
+       id_field: :endpoint_id,
+       item_key: :rpc_endpoint,
+       list_key: :rpc_endpoints,
+       list: &BlockchainControl.list_rpc_endpoints/2,
+       get: &BlockchainControl.get_rpc_endpoint/2,
+       upsert: &BlockchainControl.upsert_rpc_endpoint/2,
+       delete: &BlockchainControl.delete_rpc_endpoint/3
+     }}
+  end
+
+  defp blockchain_resource("address-watchlist") do
+    {:ok,
+     %{
+       id_field: :entry_id,
+       item_key: :address_watch,
+       list_key: :address_watchlist,
+       list: &BlockchainControl.list_address_watchlist/2,
+       get: &BlockchainControl.get_address_watch/2,
+       upsert: &BlockchainControl.upsert_address_watch/2,
+       delete: &BlockchainControl.delete_address_watch/3
+     }}
+  end
+
+  defp blockchain_resource("contract-watchlist") do
+    {:ok,
+     %{
+       id_field: :contract_id,
+       item_key: :contract_watch,
+       list_key: :contract_watchlist,
+       list: &BlockchainControl.list_contract_watchlist/2,
+       get: &BlockchainControl.get_contract_watch/2,
+       upsert: &BlockchainControl.upsert_contract_watch/2,
+       delete: &BlockchainControl.delete_contract_watch/3
+     }}
+  end
+
+  defp blockchain_resource("token-watchlist") do
+    {:ok,
+     %{
+       id_field: :token_id,
+       item_key: :token_watch,
+       list_key: :token_watchlist,
+       list: &BlockchainControl.list_token_watchlist/2,
+       get: &BlockchainControl.get_token_watch/2,
+       upsert: &BlockchainControl.upsert_token_watch/2,
+       delete: &BlockchainControl.delete_token_watch/3
+     }}
+  end
+
+  defp blockchain_resource("filter-rules") do
+    {:ok,
+     %{
+       id_field: :rule_id,
+       item_key: :filter_rule,
+       list_key: :filter_rules,
+       list: &BlockchainControl.list_filter_rules/2,
+       get: &BlockchainControl.get_filter_rule/2,
+       upsert: &BlockchainControl.upsert_filter_rule/2,
+       delete: &BlockchainControl.delete_filter_rule/3
+     }}
+  end
+
+  defp blockchain_resource("crawl-assignments") do
+    {:ok,
+     %{
+       id_field: :assignment_id,
+       item_key: :crawl_assignment,
+       list_key: :crawl_assignments,
+       list: &BlockchainControl.list_crawl_assignments/2,
+       get: &BlockchainControl.get_crawl_assignment/2,
+       upsert: &BlockchainControl.upsert_crawl_assignment/2,
+       delete: &BlockchainControl.delete_crawl_assignment/3
+     }}
+  end
+
+  defp blockchain_resource(resource), do: {:error, {:unknown_resource, resource}}
+
+  defp encode_module(%ModuleRegistration{} = registration) do
+    %{
+      module: registration.module,
+      display_name: registration.display_name,
+      owner: registration.owner,
+      description: registration.description,
+      enabled: registration.enabled,
+      metadata: registration.metadata || %{},
+      inserted_at: format_datetime(registration.inserted_at),
+      updated_at: format_datetime(registration.updated_at)
+    }
+  end
+
+  defp encode_module_config(%ModuleConfigVersion{} = version) do
+    %{
+      tenant_id: version.tenant_id,
+      module: version.module,
+      version: version.version,
+      config: version.config || %{},
+      checksum: version.checksum,
+      updated_by: version.updated_by,
+      inserted_at: format_datetime(version.inserted_at)
+    }
+  end
+
+  defp encode_config_plan(plan) do
+    %{
+      tenant_id: plan.tenant_id,
+      module: plan.module,
+      next_version: plan.next_version,
+      checksum: plan.checksum,
+      valid: plan.valid,
+      validation_errors: plan.validation_errors || [],
+      diff: plan.diff || %{added: [], removed: [], changed: []},
+      approval: plan.approval || %{},
+      dry_run: plan.dry_run,
+      config: plan.config || %{}
+    }
+  end
+
+  defp path_segments(path) do
+    path
+    |> path_without_query()
+    |> String.trim_leading("/")
+    |> String.split("/", trim: true)
+  end
+
+  defp path_without_query(path) do
+    case URI.parse(path).path do
+      nil -> path
+      value -> value
+    end
+  end
+
+  defp query_param(path, name, default \\ nil) do
+    path
+    |> URI.parse()
+    |> Map.get(:query)
+    |> case do
+      nil -> default
+      query -> query |> URI.decode_query() |> Map.get(name, default)
+    end
+  end
+
+  defp pagination_opts(path) do
+    [
+      limit: query_integer(path, "limit", 100),
+      offset: query_integer(path, "offset", 0)
+    ]
+  end
+
+  defp query_integer(path, name, default) do
+    case query_param(path, name) do
+      nil ->
+        default
+
+      value ->
+        case Integer.parse(value) do
+          {integer, ""} -> integer
+          _ -> default
+        end
+    end
+  end
+
+  defp pagination_response(records, opts) do
+    %{
+      limit: Keyword.fetch!(opts, :limit),
+      offset: Keyword.fetch!(opts, :offset),
+      returned: length(records)
+    }
+  end
+
   defp error_response({:error, :not_found}), do: response(404, %{error: "not_found"})
   defp error_response({:error, :tenant_mismatch}), do: response(403, %{error: "tenant_mismatch"})
   defp error_response({:error, {:empty, field}}), do: response(400, %{error: "empty_#{field}"})
+
+  defp error_response({:error, {:validation_failed, errors}}),
+    do: response(400, %{error: "validation_failed", errors: errors})
+
+  defp error_response({:error, {:approval_required, approval}}),
+    do: response(403, %{error: "approval_required", approval: approval})
+
+  defp error_response({:error, {:path_id_mismatch, field, expected, actual}}),
+    do:
+      response(400, %{error: "path_id_mismatch", field: field, expected: expected, actual: actual})
+
+  defp error_response({:error, {:invalid_map, field, value}}),
+    do: response(400, %{error: "invalid_map", field: field, value: inspect(value)})
+
+  defp error_response({:error, {:module_not_registered, module}}),
+    do: response(404, %{error: "module_not_registered", module: module})
+
+  defp error_response({:error, {:unknown_resource, resource}}),
+    do: response(404, %{error: "unknown_resource", resource: resource})
 
   defp error_response({:error, {:invalid_integer, field, value}}) do
     response(400, %{error: "invalid_integer", field: field, value: value})
@@ -606,6 +1037,7 @@ defmodule TelemetryFabricControl.HttpControlServer do
   defp reason(403), do: "Forbidden"
   defp reason(404), do: "Not Found"
   defp reason(413), do: "Payload Too Large"
+  defp reason(429), do: "Too Many Requests"
   defp reason(503), do: "Service Unavailable"
   defp reason(500), do: "Internal Server Error"
   defp reason(_), do: "OK"
@@ -657,6 +1089,40 @@ defmodule TelemetryFabricControl.HttpControlServer do
       tls_ca_file: blank_to_nil(Keyword.get(opts, :tls_ca_file)),
       tls_require_client_auth: Keyword.get(opts, :tls_require_client_auth, false)
     }
+  end
+
+  defp rate_limit_options(opts) do
+    per_second = Keyword.get(opts, :rate_limit_per_second, 0)
+
+    %{
+      enabled: is_integer(per_second) and per_second > 0,
+      per_second: per_second,
+      table:
+        :ets.new(:telemetry_fabric_control_http_rate_limit, [
+          :set,
+          :public,
+          {:read_concurrency, true},
+          {:write_concurrency, true}
+        ])
+    }
+  end
+
+  defp check_rate_limit(%{method: "GET", path: path}, _rate_limit)
+       when path in ["/healthz", "/readyz", "/metrics"],
+       do: :ok
+
+  defp check_rate_limit(_request, %{enabled: false}), do: :ok
+
+  defp check_rate_limit(request, rate_limit) do
+    bucket = System.system_time(:second)
+    key = {request.method, path_without_query(request.path), bucket}
+    count = :ets.update_counter(rate_limit.table, key, {2, 1}, {key, 0})
+
+    if count > rate_limit.per_second do
+      {:error, 429, %{error: "rate_limited"}}
+    else
+      :ok
+    end
   end
 
   defp blank_to_nil(value) when value in [nil, ""], do: nil

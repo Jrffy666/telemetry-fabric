@@ -103,6 +103,7 @@ pub enum ExporterProtocol {
     PrometheusRemoteWrite,
     Kafka,
     S3,
+    ClickHouse,
     Stdout,
     File,
 }

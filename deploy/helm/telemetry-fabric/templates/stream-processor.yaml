@@ -1,0 +1,188 @@
+{{- if .Values.streamProcessor.enabled }}
+{{- $name := include "telemetry-fabric.streamProcessorName" . -}}
+{{- $labels := include "telemetry-fabric.componentLabels" (dict "root" . "name" $name "component" "stream-processor") -}}
+{{- if .Values.streamProcessor.configMap.create }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ default (printf "%s-config" $name) .Values.streamProcessor.configMap.name }}
+  labels:
+    {{- $labels | nindent 4 }}
+data:
+  {{- toYaml .Values.streamProcessor.configMap.data | nindent 2 }}
+---
+{{- end }}
+{{- if .Values.streamProcessor.secrets.create }}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ default (printf "%s-secrets" $name) .Values.streamProcessor.secrets.name }}
+  labels:
+    {{- $labels | nindent 4 }}
+type: Opaque
+stringData:
+  {{- toYaml .Values.streamProcessor.secrets.stringData | nindent 2 }}
+---
+{{- end }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- $labels | nindent 4 }}
+spec:
+  replicas: {{ .Values.streamProcessor.replicas }}
+  {{- with .Values.streamProcessor.strategy }}
+  strategy:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ $name }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        {{- $labels | nindent 8 }}
+      {{- if or .Values.streamProcessor.podAnnotations .Values.streamProcessor.configMap.create }}
+      annotations:
+        {{- with .Values.streamProcessor.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+        {{- if .Values.streamProcessor.configMap.create }}
+        checksum/config: {{ toYaml .Values.streamProcessor.configMap.data | sha256sum | quote }}
+        {{- end }}
+      {{- end }}
+    spec:
+      serviceAccountName: {{ include "telemetry-fabric.streamProcessorServiceAccountName" . }}
+      automountServiceAccountToken: {{ .Values.streamProcessor.serviceAccount.automountServiceAccountToken }}
+      terminationGracePeriodSeconds: {{ .Values.streamProcessor.terminationGracePeriodSeconds }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- if .Values.streamProcessor.priorityClassName }}
+      priorityClassName: {{ .Values.streamProcessor.priorityClassName | quote }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.streamProcessor.podSecurityContext | nindent 8 }}
+      {{- with .Values.streamProcessor.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.streamProcessor.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.streamProcessor.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: stream-processor
+          image: "{{ .Values.streamProcessor.image.repository }}:{{ .Values.streamProcessor.image.tag }}"
+          imagePullPolicy: {{ .Values.streamProcessor.image.pullPolicy }}
+          {{- with .Values.streamProcessor.command }}
+          command:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.streamProcessor.args }}
+          args:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.streamProcessor.env }}
+          env:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- if or .Values.streamProcessor.extraEnvFrom .Values.streamProcessor.secrets.create }}
+          envFrom:
+            {{- if .Values.streamProcessor.secrets.create }}
+            - secretRef:
+                name: {{ default (printf "%s-secrets" $name) .Values.streamProcessor.secrets.name }}
+            {{- end }}
+            {{- with .Values.streamProcessor.extraEnvFrom }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          {{- end }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.streamProcessor.service.port }}
+            - name: metrics
+              containerPort: {{ .Values.streamProcessor.service.metricsPort }}
+          {{- if gt (int .Values.streamProcessor.lifecycle.preStopSleepSeconds) 0 }}
+          lifecycle:
+            preStop:
+              exec:
+                command:
+                  - /bin/sh
+                  - -c
+                  - "sleep {{ .Values.streamProcessor.lifecycle.preStopSleepSeconds }}"
+          {{- end }}
+          livenessProbe:
+            httpGet:
+              path: {{ .Values.streamProcessor.probes.liveness.path | quote }}
+              port: {{ .Values.streamProcessor.probes.liveness.port }}
+            initialDelaySeconds: {{ .Values.streamProcessor.probes.liveness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.streamProcessor.probes.liveness.periodSeconds }}
+            timeoutSeconds: {{ .Values.streamProcessor.probes.liveness.timeoutSeconds }}
+            failureThreshold: {{ .Values.streamProcessor.probes.liveness.failureThreshold }}
+          readinessProbe:
+            httpGet:
+              path: {{ .Values.streamProcessor.probes.readiness.path | quote }}
+              port: {{ .Values.streamProcessor.probes.readiness.port }}
+            initialDelaySeconds: {{ .Values.streamProcessor.probes.readiness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.streamProcessor.probes.readiness.periodSeconds }}
+            timeoutSeconds: {{ .Values.streamProcessor.probes.readiness.timeoutSeconds }}
+            failureThreshold: {{ .Values.streamProcessor.probes.readiness.failureThreshold }}
+          {{- if .Values.streamProcessor.probes.startup.enabled }}
+          startupProbe:
+            httpGet:
+              path: {{ .Values.streamProcessor.probes.startup.path | quote }}
+              port: {{ .Values.streamProcessor.probes.startup.port }}
+            initialDelaySeconds: {{ .Values.streamProcessor.probes.startup.initialDelaySeconds }}
+            periodSeconds: {{ .Values.streamProcessor.probes.startup.periodSeconds }}
+            timeoutSeconds: {{ .Values.streamProcessor.probes.startup.timeoutSeconds }}
+            failureThreshold: {{ .Values.streamProcessor.probes.startup.failureThreshold }}
+          {{- end }}
+          resources:
+            {{- toYaml .Values.streamProcessor.resources | nindent 12 }}
+          securityContext:
+            {{- toYaml .Values.streamProcessor.securityContext | nindent 12 }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            {{- if .Values.streamProcessor.configMap.create }}
+            - name: config
+              mountPath: {{ .Values.streamProcessor.configMap.mountPath | quote }}
+              readOnly: true
+            {{- end }}
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        {{- if .Values.streamProcessor.configMap.create }}
+        - name: config
+          configMap:
+            name: {{ default (printf "%s-config" $name) .Values.streamProcessor.configMap.name }}
+        {{- end }}
+{{- if .Values.streamProcessor.service.enabled }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- $labels | nindent 4 }}
+spec:
+  type: {{ .Values.streamProcessor.service.type }}
+  selector:
+    app.kubernetes.io/name: {{ $name }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+  ports:
+    - name: http
+      port: {{ .Values.streamProcessor.service.port }}
+      targetPort: http
+    - name: metrics
+      port: {{ .Values.streamProcessor.service.metricsPort }}
+      targetPort: metrics
+{{- end }}
+{{- end }}

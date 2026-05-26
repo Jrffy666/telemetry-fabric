@@ -1,0 +1,65 @@
+rule_version: blockchain-default-v1
+mode: shadow
+default_classification: DROP
+large_transfer_usd: 100000
+gas_anomaly:
+  max_gas_used: 800000
+  max_gas_price_gwei: 250
+blacklist:
+  addresses:
+    - "0x000000000000000000000000000000000000dead"
+  contracts:
+    - "0x000000000000000000000000000000000000bad0"
+  tokens:
+    - "0x000000000000000000000000000000000000bad1"
+watchlists:
+  addresses:
+    - address: "0x1111111111111111111111111111111111111111"
+      label: "treasury"
+      classification: IMPORTANT
+  contracts:
+    - address: "0x2222222222222222222222222222222222222222"
+      label: "stablecoin-usdc"
+      classification: IMPORTANT
+  tokens:
+    - address: "0x3333333333333333333333333333333333333333"
+      symbol: "USDC"
+      label: "usdc"
+      min_usd: 100000
+      classification: CRITICAL
+rules:
+  - id: reorg_forced_keep
+    description: "Reorg signals are always retained and alerted."
+    priority: 1
+    classification: CRITICAL
+    force_keep: true
+    match:
+      event_types: [reorg, reorg_event]
+      reorged: true
+  - id: node_health_forced_keep
+    description: "Node health anomalies are always retained and alerted."
+    priority: 2
+    classification: CRITICAL
+    force_keep: true
+    match:
+      event_types: [node_health]
+      node_anomaly: true
+  - id: failed_transaction_aggregate
+    description: "Failed transactions are retained as low-cost aggregate signal."
+    priority: 50
+    classification: AGGREGATE
+    match:
+      failed_transaction: true
+  - id: gas_anomaly_important
+    description: "High gas usage is retained for operational analysis."
+    priority: 40
+    classification: IMPORTANT
+    match:
+      gas_used_gte: 800000
+  - id: normal_noise_drop
+    description: "Unwatched low-value transfers are normal background noise."
+    priority: 200
+    classification: DROP
+    discard_reason: normal_noise
+    match:
+      event_types: [token_transfer, native_transfer]

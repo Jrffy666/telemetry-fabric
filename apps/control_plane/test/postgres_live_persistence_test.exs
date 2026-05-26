@@ -186,6 +186,16 @@ defmodule TelemetryFabricControl.PostgresLivePersistenceTest do
         LiveRepo,
         """
         DROP TABLE IF EXISTS
+          blockchain_checkpoints,
+          blockchain_crawl_assignments,
+          blockchain_filter_rules,
+          blockchain_token_watchlist,
+          blockchain_contract_watchlist,
+          blockchain_address_watchlist,
+          blockchain_rpc_endpoints,
+          blockchain_chains,
+          module_config_versions,
+          module_registry,
           audit_events,
           agent_commands,
           pipeline_versions,

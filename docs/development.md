@@ -4,7 +4,66 @@
 
 - Rust 1.94 or newer.
 - Elixir 1.16 or newer for the control plane.
+- Python 3.11 or newer for analytics tests.
+- CMake plus a C/C++ compiler for compute accelerator tests.
 - Docker for integration environments.
+
+## Local Toolchain Overrides
+
+The root `Makefile` uses overridable tool variables for the Python analytics
+and C++ compute accelerator targets:
+
+- `PYTHON` defaults to `python`.
+- `CMAKE` defaults to `cmake`.
+- `CTEST` defaults to `ctest`.
+- `CMAKE_GENERATOR` is empty by default and is passed to CMake as `-G` when set.
+- `CMAKE_ARCH` is empty by default and is passed to CMake as `-A` when set.
+- `CMAKE_BUILD_DIR`, `CMAKE_CONFIGURE_ARGS`, `CMAKE_BUILD_ARGS`, and
+  `CTEST_ARGS` can tune the C++ build and test commands.
+
+On Windows, inspect PATH, common install directories, and Visual Studio Build
+Tools locations:
+
+```powershell
+.\scripts\dev\find-windows-toolchain.ps1
+.\scripts\dev\find-windows-toolchain.ps1 -AsMakeArgs
+```
+
+Set overrides in the current PowerShell session before running Make. Use
+forward slashes for paths that contain backslashes, and do not include quotes
+inside the environment variable values because the `Makefile` quotes tool
+paths when invoking them:
+
+```powershell
+$env:PYTHON = "C:/Users/you/AppData/Local/Programs/Python/Python311/python.exe"
+$env:CMAKE = "C:/Program Files/CMake/bin/cmake.exe"
+$env:CTEST = "C:/Program Files/CMake/bin/ctest.exe"
+$env:CMAKE_GENERATOR = "Visual Studio 17 2022"
+$env:CMAKE_ARCH = "x64"
+
+make python-test
+make cpp-test
+```
+
+The WindowsApps `python.exe` app execution alias is not a usable CPython
+installation for tests. If `python --version` opens the Microsoft Store prompt,
+install CPython or set `PYTHON` to a real `python.exe`.
+
+When MSVC is installed but `cl.exe` is not on PATH, either run from a
+Developer PowerShell for Visual Studio or use a Visual Studio CMake generator:
+
+```powershell
+$env:CMAKE_GENERATOR = "Visual Studio 17 2022"
+$env:CMAKE_ARCH = "x64"
+make cpp-test
+```
+
+For single-command overrides, pass the variables to Make:
+
+```powershell
+make python-test PYTHON="C:/Python311/python.exe"
+make cpp-test CMAKE="C:/Program Files/CMake/bin/cmake.exe" CTEST="C:/Program Files/CMake/bin/ctest.exe" CMAKE_GENERATOR="Visual Studio 17 2022" CMAKE_ARCH="x64"
+```
 
 ## Rust
 

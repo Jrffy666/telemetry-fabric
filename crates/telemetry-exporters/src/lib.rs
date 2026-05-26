@@ -101,8 +101,10 @@ pub fn build_exporters(configs: &[ExporterConfig]) -> Result<ExporterMap, Export
             ExporterProtocol::PrometheusRemoteWrite => Box::new(
                 PrometheusRemoteWriteExporter::new(&config.endpoint, config.tls.clone())?,
             ),
-            ExporterProtocol::Kafka | ExporterProtocol::S3 => {
-                return Err(ExporterError::UnsupportedExporter(config.name.clone()));
+            ExporterProtocol::Kafka => Box::new(KafkaExporter::new(config.endpoint.clone())),
+            ExporterProtocol::S3 => Box::new(S3Exporter::new(config.endpoint.clone())),
+            ExporterProtocol::ClickHouse => {
+                Box::new(ClickHouseExporter::new(config.endpoint.clone()))
             }
         };
 
@@ -110,6 +112,84 @@ pub fn build_exporters(configs: &[ExporterConfig]) -> Result<ExporterMap, Export
     }
 
     Ok(exporters)
+}
+
+pub struct KafkaExporter {
+    endpoint: String,
+}
+
+impl KafkaExporter {
+    pub fn new(endpoint: impl Into<String>) -> Self {
+        Self {
+            endpoint: endpoint.into(),
+        }
+    }
+}
+
+impl Exporter for KafkaExporter {
+    fn export<'a>(
+        &'a mut self,
+        _batch: &'a RecordBatch,
+    ) -> Pin<Box<dyn Future<Output = Result<ExportReport, ExporterError>> + Send + 'a>> {
+        Box::pin(async move {
+            Err(ExporterError::UnsupportedExporter(format!(
+                "kafka exporter is a skeleton; endpoint={}",
+                self.endpoint
+            )))
+        })
+    }
+}
+
+pub struct S3Exporter {
+    endpoint: String,
+}
+
+impl S3Exporter {
+    pub fn new(endpoint: impl Into<String>) -> Self {
+        Self {
+            endpoint: endpoint.into(),
+        }
+    }
+}
+
+impl Exporter for S3Exporter {
+    fn export<'a>(
+        &'a mut self,
+        _batch: &'a RecordBatch,
+    ) -> Pin<Box<dyn Future<Output = Result<ExportReport, ExporterError>> + Send + 'a>> {
+        Box::pin(async move {
+            Err(ExporterError::UnsupportedExporter(format!(
+                "s3 exporter is a skeleton; endpoint={}",
+                self.endpoint
+            )))
+        })
+    }
+}
+
+pub struct ClickHouseExporter {
+    endpoint: String,
+}
+
+impl ClickHouseExporter {
+    pub fn new(endpoint: impl Into<String>) -> Self {
+        Self {
+            endpoint: endpoint.into(),
+        }
+    }
+}
+
+impl Exporter for ClickHouseExporter {
+    fn export<'a>(
+        &'a mut self,
+        _batch: &'a RecordBatch,
+    ) -> Pin<Box<dyn Future<Output = Result<ExportReport, ExporterError>> + Send + 'a>> {
+        Box::pin(async move {
+            Err(ExporterError::UnsupportedExporter(format!(
+                "clickhouse exporter is a skeleton; endpoint={}",
+                self.endpoint
+            )))
+        })
+    }
 }
 
 pub struct StdoutExporter {
@@ -2767,6 +2847,58 @@ mod tests {
         assert_eq!(report.records, 1);
         assert_eq!(*received_logs.lock().await, 1);
         server.abort();
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn kafka_s3_and_clickhouse_exporters_are_buildable_skeletons()
+    -> Result<(), Box<dyn Error>> {
+        let configs = vec![
+            ExporterConfig {
+                name: "kafka".to_string(),
+                protocol: ExporterProtocol::Kafka,
+                endpoint: "kafka://broker/topic".to_string(),
+                tls: TlsConfig::disabled(),
+                retry: telemetry_core::ExporterRetryConfig::default(),
+            },
+            ExporterConfig {
+                name: "s3".to_string(),
+                protocol: ExporterProtocol::S3,
+                endpoint: "s3://bucket/prefix".to_string(),
+                tls: TlsConfig::disabled(),
+                retry: telemetry_core::ExporterRetryConfig::default(),
+            },
+            ExporterConfig {
+                name: "clickhouse".to_string(),
+                protocol: ExporterProtocol::ClickHouse,
+                endpoint: "clickhouse://localhost:9000/events".to_string(),
+                tls: TlsConfig::disabled(),
+                retry: telemetry_core::ExporterRetryConfig::default(),
+            },
+        ];
+        let mut exporters = build_exporters(&configs)?;
+        let batch = RecordBatch::new(vec![TelemetryRecord::new(
+            "tenant-a",
+            SignalKind::Log,
+            b"module-event".to_vec(),
+        )]);
+
+        assert_eq!(exporters.len(), 3);
+        for (name, expected) in [
+            ("kafka", "kafka exporter is a skeleton"),
+            ("s3", "s3 exporter is a skeleton"),
+            ("clickhouse", "clickhouse exporter is a skeleton"),
+        ] {
+            let exporter = exporters
+                .get_mut(name)
+                .ok_or_else(|| format!("missing exporter {name}"))?;
+            let error = exporter
+                .export(&batch)
+                .await
+                .err()
+                .ok_or_else(|| format!("exporter {name} unexpectedly succeeded"))?;
+            assert!(error.to_string().contains(expected));
+        }
         Ok(())
     }
 

@@ -25,6 +25,7 @@ spec:
       {{- end }}
     spec:
       serviceAccountName: {{ include "telemetry-fabric.controlPlaneServiceAccountName" . }}
+      automountServiceAccountToken: {{ .Values.controlPlane.serviceAccount.automountServiceAccountToken }}
       terminationGracePeriodSeconds: {{ .Values.controlPlane.terminationGracePeriodSeconds }}
       {{- with .Values.imagePullSecrets }}
       imagePullSecrets:
@@ -122,9 +123,22 @@ spec:
               value: "{{ .Values.controlPlane.tls.mountPath }}/{{ .Values.controlPlane.tls.caKey }}"
             {{- end }}
             {{- end }}
+          {{- with .Values.controlPlane.extraEnvFrom }}
+          envFrom:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
           ports:
             - name: http
               containerPort: {{ .Values.controlPlane.service.port }}
+          {{- if gt (int .Values.controlPlane.lifecycle.preStopSleepSeconds) 0 }}
+          lifecycle:
+            preStop:
+              exec:
+                command:
+                  - /bin/sh
+                  - -c
+                  - "sleep {{ .Values.controlPlane.lifecycle.preStopSleepSeconds }}"
+          {{- end }}
           livenessProbe:
             {{ if .Values.controlPlane.tls.requireClientAuth }}
             tcpSocket:
@@ -135,8 +149,10 @@ spec:
               port: http
               scheme: {{ ternary "HTTPS" "HTTP" .Values.controlPlane.tls.enabled }}
             {{ end }}
-            initialDelaySeconds: 10
-            periodSeconds: 10
+            initialDelaySeconds: {{ .Values.controlPlane.probes.liveness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.controlPlane.probes.liveness.periodSeconds }}
+            timeoutSeconds: {{ .Values.controlPlane.probes.liveness.timeoutSeconds }}
+            failureThreshold: {{ .Values.controlPlane.probes.liveness.failureThreshold }}
           readinessProbe:
             {{ if .Values.controlPlane.tls.requireClientAuth }}
             tcpSocket:
@@ -147,8 +163,26 @@ spec:
               port: http
               scheme: {{ ternary "HTTPS" "HTTP" .Values.controlPlane.tls.enabled }}
             {{ end }}
-            initialDelaySeconds: 5
-            periodSeconds: 10
+            initialDelaySeconds: {{ .Values.controlPlane.probes.readiness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.controlPlane.probes.readiness.periodSeconds }}
+            timeoutSeconds: {{ .Values.controlPlane.probes.readiness.timeoutSeconds }}
+            failureThreshold: {{ .Values.controlPlane.probes.readiness.failureThreshold }}
+          {{- if .Values.controlPlane.probes.startup.enabled }}
+          startupProbe:
+            {{ if .Values.controlPlane.tls.requireClientAuth }}
+            tcpSocket:
+              port: http
+            {{ else }}
+            httpGet:
+              path: /healthz
+              port: http
+              scheme: {{ ternary "HTTPS" "HTTP" .Values.controlPlane.tls.enabled }}
+            {{ end }}
+            initialDelaySeconds: {{ .Values.controlPlane.probes.startup.initialDelaySeconds }}
+            periodSeconds: {{ .Values.controlPlane.probes.startup.periodSeconds }}
+            timeoutSeconds: {{ .Values.controlPlane.probes.startup.timeoutSeconds }}
+            failureThreshold: {{ .Values.controlPlane.probes.startup.failureThreshold }}
+          {{- end }}
           resources:
             {{- toYaml .Values.controlPlane.resources | nindent 12 }}
           securityContext:

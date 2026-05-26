@@ -1,0 +1,35 @@
+syntax = "proto3";
+
+package telemetry.fabric.blockchain.v1;
+
+import "google/protobuf/timestamp.proto";
+
+enum AlertSeverity {
+  ALERT_SEVERITY_UNSPECIFIED = 0;
+  ALERT_SEVERITY_INFO = 1;
+  ALERT_SEVERITY_WARNING = 2;
+  ALERT_SEVERITY_ERROR = 3;
+  ALERT_SEVERITY_CRITICAL = 4;
+}
+
+message AlertEvent {
+  string alert_id = 1;
+  string tenant_id = 2;
+  AlertSeverity severity = 3;
+  string title = 4;
+  string description = 5;
+  string chain = 6;
+  string network = 7;
+  string source = 8;
+  string event_type = 9;
+  string rule_id = 10;
+  uint32 rule_version = 11;
+  string dedupe_key = 12;
+  google.protobuf.Timestamp first_seen = 13;
+  google.protobuf.Timestamp last_seen = 14;
+  uint32 occurrence_count = 15;
+  map<string, string> attributes = 16;
+  bool resolved = 17;
+  google.protobuf.Timestamp resolved_at = 18;
+  string resolution_reason = 19;
+}

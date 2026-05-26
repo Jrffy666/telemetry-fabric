@@ -44,4 +44,54 @@ spec:
   egress:
     - {}
 {{- end }}
+{{- if .Values.crawler.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "telemetry-fabric.crawlerName" . }}
+  labels:
+    {{- include "telemetry-fabric.componentLabels" (dict "root" . "name" (include "telemetry-fabric.crawlerName" .) "component" "chain-crawler") | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "telemetry-fabric.crawlerName" . }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - ports:
+        - protocol: TCP
+          port: http
+        - protocol: TCP
+          port: metrics
+  egress:
+    - {}
+{{- end }}
+{{- if .Values.streamProcessor.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "telemetry-fabric.streamProcessorName" . }}
+  labels:
+    {{- include "telemetry-fabric.componentLabels" (dict "root" . "name" (include "telemetry-fabric.streamProcessorName" .) "component" "stream-processor") | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "telemetry-fabric.streamProcessorName" . }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - ports:
+        - protocol: TCP
+          port: http
+        - protocol: TCP
+          port: metrics
+  egress:
+    - {}
+{{- end }}
 {{- end }}

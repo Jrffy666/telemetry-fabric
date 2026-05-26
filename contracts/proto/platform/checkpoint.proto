@@ -1,0 +1,15 @@
+syntax = "proto3";
+
+package telemetry.fabric.platform.v1;
+
+// Checkpoint is an opaque, replayable position marker for at-least-once data
+// movement across modules. Domain adapters may add structured details in
+// attributes while retaining cursor as the canonical resume token.
+message Checkpoint {
+  string cursor = 1;
+  string source = 2;
+  string partition = 3;
+  uint64 offset = 4;
+  uint64 sequence = 5;
+  map<string, string> attributes = 6;
+}

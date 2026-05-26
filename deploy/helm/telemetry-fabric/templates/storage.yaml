@@ -1,0 +1,208 @@
+{{- if .Values.storage.redpanda.enabled }}
+{{- $name := include "telemetry-fabric.redpandaName" . -}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "telemetry-fabric.componentLabels" (dict "root" . "name" $name "component" "redpanda") | nindent 4 }}
+spec:
+  selector:
+    app.kubernetes.io/name: {{ $name }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+  ports:
+    - name: kafka
+      port: 9092
+      targetPort: kafka
+    - name: admin
+      port: 9644
+      targetPort: admin
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "telemetry-fabric.componentLabels" (dict "root" . "name" $name "component" "redpanda") | nindent 4 }}
+spec:
+  serviceName: {{ $name }}
+  replicas: {{ .Values.storage.redpanda.replicas }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ $name }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        {{- include "telemetry-fabric.componentLabels" (dict "root" . "name" $name "component" "redpanda") | nindent 8 }}
+    spec:
+      terminationGracePeriodSeconds: 60
+      {{- with .Values.storage.redpanda.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.storage.redpanda.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.storage.redpanda.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: redpanda
+          image: "{{ .Values.storage.redpanda.image.repository }}:{{ .Values.storage.redpanda.image.tag }}"
+          imagePullPolicy: {{ .Values.storage.redpanda.image.pullPolicy }}
+          command:
+            - /usr/bin/rpk
+          args:
+            - redpanda
+            - start
+            - --overprovisioned
+            - --smp=1
+            - --memory=1G
+            - --reserve-memory=0M
+            - --node-id=0
+            - --check=false
+            - --kafka-addr=PLAINTEXT://0.0.0.0:9092
+            - --advertise-kafka-addr=PLAINTEXT://{{ $name }}:9092
+          ports:
+            - name: kafka
+              containerPort: 9092
+            - name: admin
+              containerPort: 9644
+          readinessProbe:
+            httpGet:
+              path: /v1/status/ready
+              port: admin
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /v1/status/ready
+              port: admin
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          startupProbe:
+            httpGet:
+              path: /v1/status/ready
+              port: admin
+            periodSeconds: 5
+            failureThreshold: 36
+          resources:
+            {{- toYaml .Values.storage.redpanda.resources | nindent 12 }}
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/redpanda/data
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        {{- if .Values.storage.redpanda.storageClass }}
+        storageClassName: {{ .Values.storage.redpanda.storageClass | quote }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.storage.redpanda.storageSize | quote }}
+{{- end }}
+{{- if .Values.storage.clickhouse.enabled }}
+{{- if .Values.storage.redpanda.enabled }}
+---
+{{- end }}
+{{- $name := include "telemetry-fabric.clickhouseName" . -}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "telemetry-fabric.componentLabels" (dict "root" . "name" $name "component" "clickhouse") | nindent 4 }}
+spec:
+  selector:
+    app.kubernetes.io/name: {{ $name }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+  ports:
+    - name: http
+      port: 8123
+      targetPort: http
+    - name: native
+      port: 9000
+      targetPort: native
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "telemetry-fabric.componentLabels" (dict "root" . "name" $name "component" "clickhouse") | nindent 4 }}
+spec:
+  serviceName: {{ $name }}
+  replicas: {{ .Values.storage.clickhouse.replicas }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ $name }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        {{- include "telemetry-fabric.componentLabels" (dict "root" . "name" $name "component" "clickhouse") | nindent 8 }}
+    spec:
+      terminationGracePeriodSeconds: 60
+      {{- with .Values.storage.clickhouse.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.storage.clickhouse.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.storage.clickhouse.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: clickhouse
+          image: "{{ .Values.storage.clickhouse.image.repository }}:{{ .Values.storage.clickhouse.image.tag }}"
+          imagePullPolicy: {{ .Values.storage.clickhouse.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 8123
+            - name: native
+              containerPort: 9000
+          readinessProbe:
+            httpGet:
+              path: /ping
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /ping
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          startupProbe:
+            httpGet:
+              path: /ping
+              port: http
+            periodSeconds: 5
+            failureThreshold: 36
+          resources:
+            {{- toYaml .Values.storage.clickhouse.resources | nindent 12 }}
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/clickhouse
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        {{- if .Values.storage.clickhouse.storageClass }}
+        storageClassName: {{ .Values.storage.clickhouse.storageClass | quote }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.storage.clickhouse.storageSize | quote }}
+{{- end }}

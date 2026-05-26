@@ -11,6 +11,7 @@ path = "src/lib.rs"
 
 [dependencies]
 telemetry-core = { path = "../telemetry-core" }
+telemetry-module-sdk = { path = "../telemetry-module-sdk" }
 
 [lints]
 workspace = true

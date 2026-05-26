@@ -1,0 +1,45 @@
+groups:
+  - name: telemetry-fabric.checkpoint
+    interval: 30s
+    rules:
+      - record: crawler:checkpoint_gap:blocks
+        expr: max by (chain, network, crawler) (crawler_processed_height) - max by (chain, network, crawler) (crawler_checkpoint_height)
+
+      - record: crawler:block_gap_rate:5m
+        expr: sum by (chain, network, crawler) (rate(crawler_block_gap_total[5m]))
+
+      - record: crawler:reorg_rate:10m
+        expr: sum by (chain, network, crawler) (rate(crawler_reorg_events_total[10m]))
+
+      - alert: BlockGapDetected
+        expr: increase(crawler_block_gap_total[5m]) > 0
+        for: 1m
+        labels:
+          severity: critical
+          service: crawler
+        annotations:
+          summary: "Crawler block gap detected"
+          description: "Crawler {{ $labels.crawler }} detected one or more missing block ranges on {{ $labels.chain }}/{{ $labels.network }}."
+          runbook_url: "https://runbooks.example.com/telemetry-fabric/block-gap"
+
+      - alert: ReorgSpike
+        expr: increase(crawler_reorg_events_total[10m]) > 3
+        for: 5m
+        labels:
+          severity: warning
+          service: crawler
+        annotations:
+          summary: "Crawler reorg spike"
+          description: "Crawler {{ $labels.crawler }} observed an elevated reorg rate on {{ $labels.chain }}/{{ $labels.network }}."
+          runbook_url: "https://runbooks.example.com/telemetry-fabric/reorg-spike"
+
+      - alert: CheckpointLagTooHigh
+        expr: crawler:checkpoint_gap:blocks > 1000
+        for: 10m
+        labels:
+          severity: warning
+          service: crawler
+        annotations:
+          summary: "Crawler checkpoint lag is high"
+          description: "Checkpoint height for {{ $labels.crawler }} is more than 1000 blocks behind processed height."
+          runbook_url: "https://runbooks.example.com/telemetry-fabric/checkpoint-lag"

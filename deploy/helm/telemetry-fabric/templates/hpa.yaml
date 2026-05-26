@@ -1,0 +1,90 @@
+{{- if and .Values.controlPlane.enabled .Values.controlPlane.hpa.enabled }}
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ include "telemetry-fabric.controlPlaneName" . }}
+  labels:
+    {{- include "telemetry-fabric.controlPlaneLabels" . | nindent 4 }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ include "telemetry-fabric.controlPlaneName" . }}
+  minReplicas: {{ .Values.controlPlane.hpa.minReplicas }}
+  maxReplicas: {{ .Values.controlPlane.hpa.maxReplicas }}
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: {{ .Values.controlPlane.hpa.targetCPUUtilizationPercentage }}
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: {{ .Values.controlPlane.hpa.targetMemoryUtilizationPercentage }}
+{{- end }}
+{{- if and .Values.crawler.enabled .Values.crawler.hpa.enabled }}
+{{- if and .Values.controlPlane.enabled .Values.controlPlane.hpa.enabled }}
+---
+{{- end }}
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ include "telemetry-fabric.crawlerName" . }}
+  labels:
+    {{- include "telemetry-fabric.componentLabels" (dict "root" . "name" (include "telemetry-fabric.crawlerName" .) "component" "chain-crawler") | nindent 4 }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ include "telemetry-fabric.crawlerName" . }}
+  minReplicas: {{ .Values.crawler.hpa.minReplicas }}
+  maxReplicas: {{ .Values.crawler.hpa.maxReplicas }}
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: {{ .Values.crawler.hpa.targetCPUUtilizationPercentage }}
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: {{ .Values.crawler.hpa.targetMemoryUtilizationPercentage }}
+{{- end }}
+{{- if and .Values.streamProcessor.enabled .Values.streamProcessor.hpa.enabled }}
+{{- if or (and .Values.controlPlane.enabled .Values.controlPlane.hpa.enabled) (and .Values.crawler.enabled .Values.crawler.hpa.enabled) }}
+---
+{{- end }}
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ include "telemetry-fabric.streamProcessorName" . }}
+  labels:
+    {{- include "telemetry-fabric.componentLabels" (dict "root" . "name" (include "telemetry-fabric.streamProcessorName" .) "component" "stream-processor") | nindent 4 }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ include "telemetry-fabric.streamProcessorName" . }}
+  minReplicas: {{ .Values.streamProcessor.hpa.minReplicas }}
+  maxReplicas: {{ .Values.streamProcessor.hpa.maxReplicas }}
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: {{ .Values.streamProcessor.hpa.targetCPUUtilizationPercentage }}
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: {{ .Values.streamProcessor.hpa.targetMemoryUtilizationPercentage }}
+{{- end }}

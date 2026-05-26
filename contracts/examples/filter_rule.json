@@ -1,0 +1,40 @@
+{
+  "rule_id": "large-usdc-transfer-v3",
+  "tenant_id": "tenant_demo",
+  "name": "Large USDC transfers",
+  "description": "Route large Ethereum mainnet USDC transfers to the alerting stream.",
+  "enabled": true,
+  "version": 3,
+  "chain": "ethereum",
+  "network": "mainnet",
+  "event_types": [
+    "transfer"
+  ],
+  "contract_addresses": [
+    "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"
+  ],
+  "from_addresses": [],
+  "to_addresses": [],
+  "token_addresses": [
+    "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"
+  ],
+  "min_amount_decimal": "1000.00",
+  "max_amount_decimal": "",
+  "attributes": {
+    "asset": "USDC",
+    "owner": "risk"
+  },
+  "action": {
+    "type": "RULE_ACTION_TYPE_ALERT",
+    "priority": "PRIORITY_IMPORTANT",
+    "route": "alerts.blockchain.large_transfers",
+    "discard_reason": "",
+    "alert_channels": [
+      "risk-ops",
+      "pagerduty-blockchain"
+    ],
+    "attributes": {
+      "dedupe_window": "10m"
+    }
+  }
+}

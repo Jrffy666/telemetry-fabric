@@ -75,7 +75,114 @@ services:
     volumes:
       - telemetry_agent_queue:/var/lib/telemetry-fabric
 
+  redpanda:
+    image: docker.redpanda.com/redpandadata/redpanda:v24.3.1
+    profiles: ["blockchain", "crawler", "stream"]
+    command:
+      - redpanda
+      - start
+      - --overprovisioned
+      - --smp=1
+      - --memory=1G
+      - --reserve-memory=0M
+      - --node-id=0
+      - --check=false
+      - --kafka-addr=PLAINTEXT://0.0.0.0:9092
+      - --advertise-kafka-addr=PLAINTEXT://redpanda:9092
+    ports:
+      - "9092:9092"
+      - "9644:9644"
+    healthcheck:
+      test: ["CMD-SHELL", "rpk cluster health --brokers=127.0.0.1:9092 | grep -q Healthy"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    volumes:
+      - redpanda_data:/var/lib/redpanda/data
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:24.12
+    profiles: ["blockchain", "crawler", "stream"]
+    environment:
+      CLICKHOUSE_DB: telemetry_fabric
+      CLICKHOUSE_USER: default
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-}
+    ports:
+      - "8123:8123"
+      - "9000:9000"
+    healthcheck:
+      test: ["CMD-SHELL", "clickhouse-client --query 'SELECT 1'"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    volumes:
+      - clickhouse_data:/var/lib/clickhouse
+
+  chain-crawler:
+    image: ${CHAIN_CRAWLER_IMAGE:-telemetry-fabric/chain-crawler-go:local}
+    profiles: ["crawler"]
+    environment:
+      TELEMETRY_FABRIC_CONTROL_ENDPOINT: http://control-plane:4001
+      TELEMETRY_FABRIC_KAFKA_BROKERS: redpanda:9092
+      TELEMETRY_FABRIC_CLICKHOUSE_HTTP_URL: http://clickhouse:8123
+      TELEMETRY_FABRIC_CHAIN_NAME: ethereum
+      TELEMETRY_FABRIC_CHAIN_NETWORK: mainnet
+      TELEMETRY_FABRIC_CONTROL_AUTH_TOKEN: ${TELEMETRY_FABRIC_CONTROL_AGENT_TOKEN:-local-agent-token}
+    depends_on:
+      control-plane:
+        condition: service_healthy
+      redpanda:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
+    restart: unless-stopped
+
+  stream-processor:
+    image: ${STREAM_PROCESSOR_IMAGE:-telemetry-fabric/stream-processor:local}
+    profiles: ["stream"]
+    environment:
+      TELEMETRY_FABRIC_KAFKA_BROKERS: redpanda:9092
+      TELEMETRY_FABRIC_INPUT_TOPIC: chain.events.raw
+      TELEMETRY_FABRIC_CRITICAL_TOPIC: chain.events.critical
+      TELEMETRY_FABRIC_IMPORTANT_TOPIC: chain.events.important
+      TELEMETRY_FABRIC_AGGREGATE_TOPIC: chain.events.aggregate
+    depends_on:
+      redpanda:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
+    restart: unless-stopped
+
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    profiles: ["observability"]
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=7d
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+
+  grafana:
+    image: grafana/grafana:11.4.0
+    profiles: ["observability"]
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus
+    volumes:
+      - grafana_data:/var/lib/grafana
+
 volumes:
   postgres_data:
   control_plane_data:
   telemetry_agent_queue:
+  redpanda_data:
+  clickhouse_data:
+  prometheus_data:
+  grafana_data:

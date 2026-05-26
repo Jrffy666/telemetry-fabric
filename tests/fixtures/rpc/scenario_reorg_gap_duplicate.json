@@ -1,0 +1,110 @@
+{
+  "name": "reorg-gap-duplicate",
+  "chain_id": "0x1",
+  "network": "fixture-mainnet",
+  "head": "0x13",
+  "finalized": "0x10",
+  "blocks": [
+    {
+      "number": "0x10",
+      "hash": "0x0000000000000000000000000000000000000000000000000000000000000010",
+      "parentHash": "0x000000000000000000000000000000000000000000000000000000000000000f",
+      "timestamp": "0x65a00010",
+      "logs": []
+    },
+    {
+      "number": "0x11",
+      "hash": "0x0000000000000000000000000000000000000000000000000000000000000011",
+      "parentHash": "0x0000000000000000000000000000000000000000000000000000000000000010",
+      "timestamp": "0x65a0001c",
+      "logs": []
+    },
+    {
+      "number": "0x12",
+      "hash": "0x0000000000000000000000000000000000000000000000000000000000000012",
+      "parentHash": "0x0000000000000000000000000000000000000000000000000000000000000011",
+      "timestamp": "0x65a00028",
+      "logs": [
+        {
+          "address": "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+          "topics": [
+            "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef",
+            "0x0000000000000000000000002222222222222222222222222222222222222222",
+            "0x0000000000000000000000003333333333333333333333333333333333333333"
+          ],
+          "data": "0x00000000000000000000000000000000000000000000000000000000001e8480",
+          "blockNumber": "0x12",
+          "blockHash": "0x0000000000000000000000000000000000000000000000000000000000000012",
+          "transactionHash": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa00012",
+          "transactionIndex": "0x0",
+          "logIndex": "0x0",
+          "removed": false
+        },
+        {
+          "address": "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+          "topics": [
+            "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef",
+            "0x0000000000000000000000002222222222222222222222222222222222222222",
+            "0x0000000000000000000000003333333333333333333333333333333333333333"
+          ],
+          "data": "0x00000000000000000000000000000000000000000000000000000000001e8480",
+          "blockNumber": "0x12",
+          "blockHash": "0x0000000000000000000000000000000000000000000000000000000000000012",
+          "transactionHash": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa00012",
+          "transactionIndex": "0x0",
+          "logIndex": "0x0",
+          "removed": false
+        }
+      ]
+    },
+    {
+      "number": "0x13",
+      "hash": "0x0000000000000000000000000000000000000000000000000000000000000013",
+      "parentHash": "0x0000000000000000000000000000000000000000000000000000000000000012",
+      "timestamp": "0x65a00034",
+      "logs": []
+    }
+  ],
+  "gaps": [
+    "0x11"
+  ],
+  "reorgs": [
+    {
+      "name": "replace-block-18",
+      "replace_from": "0x12",
+      "new_head": "0x13",
+      "blocks": [
+        {
+          "number": "0x12",
+          "hash": "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff0012",
+          "parentHash": "0x0000000000000000000000000000000000000000000000000000000000000011",
+          "timestamp": "0x65a00029",
+          "logs": [
+            {
+              "address": "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+              "topics": [
+                "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef",
+                "0x0000000000000000000000004444444444444444444444444444444444444444",
+                "0x0000000000000000000000005555555555555555555555555555555555555555"
+              ],
+              "data": "0x00000000000000000000000000000000000000000000000000000000002dc6c0",
+              "blockNumber": "0x12",
+              "blockHash": "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff0012",
+              "transactionHash": "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb00012",
+              "transactionIndex": "0x0",
+              "logIndex": "0x0",
+              "removed": false
+            }
+          ]
+        },
+        {
+          "number": "0x13",
+          "hash": "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff0013",
+          "parentHash": "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff0012",
+          "timestamp": "0x65a00035",
+          "logs": []
+        }
+      ]
+    }
+  ]
+}

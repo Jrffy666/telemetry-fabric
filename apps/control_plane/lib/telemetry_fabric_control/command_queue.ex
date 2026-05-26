@@ -13,6 +13,8 @@ defmodule TelemetryFabricControl.CommandQueue do
 
   alias TelemetryFabricControl.ControlCommand
 
+  @default_command_lease_ms 30_000
+
   def start_link(opts) do
     name = Keyword.get(opts, :name, __MODULE__)
     GenServer.start_link(__MODULE__, opts, name: name)
@@ -70,8 +72,11 @@ defmodule TelemetryFabricControl.CommandQueue do
   def init(opts) do
     storage_path = Keyword.get(opts, :storage_path)
     audit_log = Keyword.get(opts, :audit_log, TelemetryFabricControl.AuditLog)
+    lease_ms = Keyword.get(opts, :lease_ms, command_lease_ms())
     commands = TelemetryFabricControl.StateFile.load(storage_path, %{})
-    {:ok, %{commands: commands, storage_path: storage_path, audit_log: audit_log}}
+
+    {:ok,
+     %{commands: commands, storage_path: storage_path, audit_log: audit_log, lease_ms: lease_ms}}
   end
 
   @impl true
@@ -88,13 +93,13 @@ defmodule TelemetryFabricControl.CommandQueue do
 
   def handle_call({:drain, agent_id}, _from, state) do
     existing = Map.get(state.commands, agent_id, [])
-    pending = Enum.filter(existing, &ControlCommand.pending?/1)
-    pending_ids = MapSet.new(Enum.map(pending, & &1.command_id))
     delivered_at = DateTime.utc_now()
+    deliverable = Enum.filter(existing, &deliverable?(&1, delivered_at, state.lease_ms))
+    deliverable_ids = MapSet.new(Enum.map(deliverable, & &1.command_id))
 
     updated =
       Enum.map(existing, fn command ->
-        if ControlCommand.pending?(command) do
+        if MapSet.member?(deliverable_ids, command.command_id) do
           ControlCommand.mark_delivered(command, delivered_at)
         else
           command
@@ -102,7 +107,7 @@ defmodule TelemetryFabricControl.CommandQueue do
       end)
 
     delivered =
-      Enum.filter(updated, &MapSet.member?(pending_ids, &1.command_id))
+      Enum.filter(updated, &MapSet.member?(deliverable_ids, &1.command_id))
 
     commands =
       if updated == [] do
@@ -112,7 +117,7 @@ defmodule TelemetryFabricControl.CommandQueue do
       end
 
     persist!(state, commands)
-    Enum.each(pending, &audit_command(state, &1, "command.delivered", agent_id))
+    Enum.each(delivered, &audit_command(state, &1, "command.delivered", agent_id))
     {:reply, delivered, %{state | commands: commands}}
   end
 
@@ -121,21 +126,25 @@ defmodule TelemetryFabricControl.CommandQueue do
 
     case Enum.split_with(existing, &(&1.command_id == command_id)) do
       {[command], rest} ->
-        acknowledged = ControlCommand.mark_acknowledged(command, success, message)
+        if terminal?(command) do
+          {:reply, {:ok, command}, state}
+        else
+          acknowledged = ControlCommand.mark_acknowledged(command, success, message)
 
-        commands =
-          Map.put(state.commands, agent_id, Enum.sort_by([acknowledged | rest], &sort_key/1))
+          commands =
+            Map.put(state.commands, agent_id, Enum.sort_by([acknowledged | rest], &sort_key/1))
 
-        persist!(state, commands)
+          persist!(state, commands)
 
-        audit_command(
-          state,
-          acknowledged,
-          if(success, do: "command.succeeded", else: "command.failed"),
-          agent_id
-        )
+          audit_command(
+            state,
+            acknowledged,
+            if(success, do: "command.succeeded", else: "command.failed"),
+            agent_id
+          )
 
-        {:reply, {:ok, acknowledged}, %{state | commands: commands}}
+          {:reply, {:ok, acknowledged}, %{state | commands: commands}}
+        end
 
       {[], _rest} ->
         {:reply, {:error, :not_found}, state}
@@ -174,6 +183,43 @@ defmodule TelemetryFabricControl.CommandQueue do
 
   defp sort_key(%ControlCommand{} = command) do
     {DateTime.to_unix(command.inserted_at, :microsecond), command.command_id}
+  end
+
+  defp deliverable?(%ControlCommand{} = command, now, lease_ms) do
+    ControlCommand.pending?(command) or lease_expired?(command, now, lease_ms)
+  end
+
+  defp lease_expired?(%ControlCommand{} = command, now, lease_ms) do
+    case {ControlCommand.status(command), ControlCommand.delivered_at(command)} do
+      {:delivered, nil} ->
+        true
+
+      {:delivered, %DateTime{} = delivered_at} ->
+        delivered_at
+        |> DateTime.add(lease_ms * 1_000, :microsecond)
+        |> DateTime.compare(now)
+        |> Kernel.!=(:gt)
+
+      _other ->
+        false
+    end
+  end
+
+  defp terminal?(%ControlCommand{} = command) do
+    ControlCommand.status(command) in [:succeeded, :failed]
+  end
+
+  defp command_lease_ms do
+    case System.get_env("TELEMETRY_FABRIC_CONTROL_COMMAND_LEASE_MS") do
+      nil ->
+        @default_command_lease_ms
+
+      value ->
+        case Integer.parse(value) do
+          {lease_ms, ""} when lease_ms > 0 -> lease_ms
+          _invalid -> @default_command_lease_ms
+        end
+    end
   end
 
   defp audit_command(state, %ControlCommand{} = command, action, actor) do

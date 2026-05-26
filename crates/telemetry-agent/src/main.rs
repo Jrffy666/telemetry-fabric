@@ -8,7 +8,7 @@ mod tf_line;
 use config_file::load_pipeline_config;
 use control_client::{
     ConfigUpdate, ControlClient, ControlClientSecurity, ControlCommand, ControlCommandKind,
-    ControlCommandStatus, HeartbeatStats, validate_config_update,
+    ControlCommandStatus, HeartbeatStats,
 };
 use otlp::serve_otlp_grpc;
 use otlp_http::serve_otlp_http;
@@ -539,7 +539,7 @@ async fn fetch_and_apply_config(
     let Some(update) = update else {
         return Ok(None);
     };
-    let config = validate_config_update(&update)?;
+    let config = client.validate_config_update(&update)?;
     runtime.lock().await.reload_config(config)?;
     Ok(Some(update))
 }
@@ -665,6 +665,7 @@ struct Args {
     control_cert_file: Option<String>,
     control_key_file: Option<String>,
     control_server_name: Option<String>,
+    control_config_signing_key: Option<String>,
     flush_batch_size: usize,
     flush_interval_ms: u64,
     control_heartbeat_interval_ms: u64,
@@ -692,6 +693,8 @@ impl Args {
             control_cert_file: env::var("TELEMETRY_FABRIC_CONTROL_CERT_FILE").ok(),
             control_key_file: env::var("TELEMETRY_FABRIC_CONTROL_KEY_FILE").ok(),
             control_server_name: env::var("TELEMETRY_FABRIC_CONTROL_SERVER_NAME").ok(),
+            control_config_signing_key: env::var("TELEMETRY_FABRIC_CONTROL_CONFIG_SIGNING_KEY")
+                .ok(),
             flush_batch_size: 128,
             flush_interval_ms: 1000,
             control_heartbeat_interval_ms: 5000,
@@ -751,6 +754,10 @@ impl Args {
                 "--control-server-name" => {
                     args.control_server_name =
                         Some(next_value(&mut values, "--control-server-name")?);
+                }
+                "--control-config-signing-key" => {
+                    args.control_config_signing_key =
+                        Some(next_value(&mut values, "--control-config-signing-key")?);
                 }
                 "--flush-batch-size" => {
                     args.flush_batch_size =
@@ -935,6 +942,7 @@ fn control_client_security(args: &Args) -> ControlClientSecurity {
             server_name: args.control_server_name.clone(),
             require_client_auth: false,
         },
+        config_signing_key: args.control_config_signing_key.clone(),
     }
 }
 

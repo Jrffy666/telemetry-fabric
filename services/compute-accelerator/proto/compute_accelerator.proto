@@ -1,0 +1,207 @@
+syntax = "proto3";
+
+package telemetry.fabric.compute.v1;
+
+// Phase 1 contract skeleton for an optional, replaceable batch compute service.
+// The service is not part of crawler ingestion and does not connect to chain RPC.
+
+enum JobKind {
+  JOB_KIND_UNSPECIFIED = 0;
+  JOB_KIND_BATCH_GRAPH_COMPUTE = 1;
+  JOB_KIND_N_HOP_FUND_FLOW = 2;
+  JOB_KIND_BATCH_RISK_SCORE = 3;
+  JOB_KIND_FEATURE_COMPUTE = 4;
+  JOB_KIND_MODEL_INFERENCE = 5;
+}
+
+enum JobStatus {
+  JOB_STATUS_UNSPECIFIED = 0;
+  JOB_STATUS_ACCEPTED = 1;
+  JOB_STATUS_QUEUED = 2;
+  JOB_STATUS_RUNNING = 3;
+  JOB_STATUS_SUCCEEDED = 4;
+  JOB_STATUS_FAILED = 5;
+  JOB_STATUS_CANCELLED = 6;
+  JOB_STATUS_TIMED_OUT = 7;
+}
+
+enum AcceleratorKind {
+  ACCELERATOR_KIND_UNSPECIFIED = 0;
+  ACCELERATOR_KIND_CPU = 1;
+  ACCELERATOR_KIND_GPU = 2;
+  ACCELERATOR_KIND_AUTO = 3;
+}
+
+enum FallbackPolicy {
+  FALLBACK_POLICY_UNSPECIFIED = 0;
+  FALLBACK_POLICY_FAIL_IF_GPU_UNAVAILABLE = 1;
+  FALLBACK_POLICY_USE_CPU_IF_GPU_UNAVAILABLE = 2;
+}
+
+enum ErrorCode {
+  ERROR_CODE_UNSPECIFIED = 0;
+  ERROR_CODE_INVALID_ARGUMENT = 1;
+  ERROR_CODE_UNSUPPORTED_JOB_KIND = 2;
+  ERROR_CODE_GPU_UNAVAILABLE = 3;
+  ERROR_CODE_TIMEOUT = 4;
+  ERROR_CODE_CANCELLED = 5;
+  ERROR_CODE_INPUT_UNAVAILABLE = 6;
+  ERROR_CODE_OUTPUT_UNAVAILABLE = 7;
+  ERROR_CODE_INTERNAL = 8;
+}
+
+message ErrorDetail {
+  ErrorCode code = 1;
+  string message = 2;
+  bool retryable = 3;
+  map<string, string> attributes = 4;
+}
+
+message KafkaBatchInput {
+  string bootstrap_servers = 1;
+  string topic = 2;
+  string consumer_group = 3;
+  string start_offset = 4;
+  string end_offset = 5;
+}
+
+message ArrowBatchInput {
+  string uri = 1;
+  string schema_fingerprint = 2;
+}
+
+message ParquetBatchInput {
+  string uri = 1;
+  repeated string columns = 2;
+}
+
+message BatchInput {
+  oneof source {
+    KafkaBatchInput kafka = 1;
+    ArrowBatchInput arrow = 2;
+    ParquetBatchInput parquet = 3;
+  }
+}
+
+message GraphComputationSpec {
+  string graph_uri = 1;
+  repeated string node_columns = 2;
+  repeated string edge_columns = 3;
+  map<string, string> parameters = 4;
+}
+
+message FundFlowSearchSpec {
+  string seed_entity_id = 1;
+  uint32 max_hops = 2;
+  double min_amount = 3;
+  uint64 start_time_unix_seconds = 4;
+  uint64 end_time_unix_seconds = 5;
+}
+
+message RiskScoreSpec {
+  string model_id = 1;
+  string feature_set_id = 2;
+  map<string, string> parameters = 3;
+}
+
+message FeatureComputationSpec {
+  string feature_set_id = 1;
+  repeated string feature_names = 2;
+  map<string, string> parameters = 3;
+}
+
+message ModelInferenceSpec {
+  string model_id = 1;
+  string model_version = 2;
+  map<string, string> parameters = 3;
+}
+
+message ExecutionOptions {
+  AcceleratorKind accelerator = 1;
+  FallbackPolicy fallback_policy = 2;
+  uint64 timeout_ms = 3;
+  uint64 max_batch_rows = 4;
+  map<string, string> labels = 5;
+}
+
+message ComputeJob {
+  string tenant_id = 1;
+  string job_id = 2;
+  JobKind kind = 3;
+  BatchInput input = 4;
+  string output_uri = 5;
+  ExecutionOptions options = 6;
+
+  oneof spec {
+    GraphComputationSpec graph = 10;
+    FundFlowSearchSpec fund_flow = 11;
+    RiskScoreSpec risk_score = 12;
+    FeatureComputationSpec feature_compute = 13;
+    ModelInferenceSpec model_inference = 14;
+  }
+}
+
+message JobMetrics {
+  uint64 duration_ms = 1;
+  uint64 queued_ms = 2;
+  uint64 input_rows = 3;
+  uint64 output_rows = 4;
+  uint64 batch_bytes = 5;
+  double throughput_rows_per_second = 6;
+  uint64 gpu_memory_used_bytes = 7;
+}
+
+message SubmitJobRequest {
+  ComputeJob job = 1;
+}
+
+message SubmitJobResponse {
+  string job_id = 1;
+  JobStatus status = 2;
+  AcceleratorKind selected_accelerator = 3;
+  bool cpu_fallback_used = 4;
+  ErrorDetail error = 5;
+}
+
+message GetJobStatusRequest {
+  string tenant_id = 1;
+  string job_id = 2;
+}
+
+message GetJobStatusResponse {
+  string job_id = 1;
+  JobStatus status = 2;
+  string message = 3;
+  string output_uri = 4;
+  JobMetrics metrics = 5;
+  ErrorDetail error = 6;
+}
+
+message CancelJobRequest {
+  string tenant_id = 1;
+  string job_id = 2;
+  string reason = 3;
+}
+
+message CancelJobResponse {
+  string job_id = 1;
+  JobStatus status = 2;
+  ErrorDetail error = 3;
+}
+
+message HealthRequest {}
+
+message HealthResponse {
+  bool ready = 1;
+  bool gpu_available = 2;
+  uint64 gpu_memory_total_bytes = 3;
+  uint64 gpu_memory_free_bytes = 4;
+  map<string, string> attributes = 5;
+}
+
+service ComputeAcceleratorService {
+  rpc SubmitJob(SubmitJobRequest) returns (SubmitJobResponse);
+  rpc GetJobStatus(GetJobStatusRequest) returns (GetJobStatusResponse);
+  rpc CancelJob(CancelJobRequest) returns (CancelJobResponse);
+  rpc Health(HealthRequest) returns (HealthResponse);
+}

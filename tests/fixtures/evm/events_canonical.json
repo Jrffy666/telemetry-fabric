@@ -1,0 +1,22 @@
+{
+  "events": [
+    {
+      "chain_id": 1,
+      "block_number": 17,
+      "block_hash": "0x0000000000000000000000000000000000000000000000000000000000000011",
+      "tx_hash": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa00011",
+      "log_index": 0,
+      "finality_status": "FINALITY_STATUS_FINALIZED",
+      "dedupe_key": "1|0x0000000000000000000000000000000000000000000000000000000000000011|0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa00011|0"
+    },
+    {
+      "chain_id": 1,
+      "block_number": 18,
+      "block_hash": "0x0000000000000000000000000000000000000000000000000000000000000012",
+      "tx_hash": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa00012",
+      "log_index": 0,
+      "finality_status": "FINALITY_STATUS_PENDING",
+      "dedupe_key": "1|0x0000000000000000000000000000000000000000000000000000000000000012|0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa00012|0"
+    }
+  ]
+}

@@ -265,6 +265,46 @@ defmodule TelemetryFabricControl.ControlServiceTest do
     assert Enum.count(audit_actions, &(&1 == "command.delivered")) == 2
   end
 
+  test "heartbeat redelivers delivered operator commands after the lease expires" do
+    ControlService.register_agent(%{
+      agent_id: "agent-1",
+      tenant_id: "payments-prod",
+      hostname: "node-a",
+      version: "0.1.0"
+    })
+
+    expired_delivered_at = DateTime.add(DateTime.utc_now(), -120, :second)
+
+    command =
+      ControlCommand.new(%{
+        agent_id: "agent-1",
+        tenant_id: "payments-prod",
+        kind: :pause_exports,
+        reason: "maintenance",
+        status: :delivered,
+        delivered_at: expired_delivered_at
+      })
+
+    assert {:ok, _command} = CommandQueue.enqueue(command)
+
+    assert {:ok, [%ControlCommand{command_id: command_id, status: :delivered} = delivered]} =
+             ControlService.heartbeat(%{
+               agent_id: "agent-1",
+               tenant_id: "payments-prod",
+               config_version: 1
+             })
+
+    assert command_id == command.command_id
+    assert DateTime.compare(delivered.delivered_at, expired_delivered_at) == :gt
+
+    assert {:ok, []} =
+             ControlService.heartbeat(%{
+               agent_id: "agent-1",
+               tenant_id: "payments-prod",
+               config_version: 1
+             })
+  end
+
   test "agents acknowledge delivered operator commands" do
     ControlService.register_agent(%{
       agent_id: "agent-1",
@@ -285,7 +325,15 @@ defmodule TelemetryFabricControl.ControlServiceTest do
 
     assert command_id == queued.command_id
 
-    assert {:ok, %ControlCommand{status: :succeeded, acknowledged_at: %DateTime{}}} =
+    assert {:ok, %ControlCommand{status: :succeeded, acknowledged_at: %DateTime{}} = acked} =
+             ControlService.ack_command(%{
+               agent_id: "agent-1",
+               tenant_id: "payments-prod",
+               command_id: command_id,
+               success: true
+             })
+
+    assert {:ok, ^acked} =
              ControlService.ack_command(%{
                agent_id: "agent-1",
                tenant_id: "payments-prod",
@@ -303,7 +351,8 @@ defmodule TelemetryFabricControl.ControlServiceTest do
              }
            ] = CommandQueue.list_all()
 
-    assert Enum.any?(AuditLog.list(:all), &(&1.action == "command.succeeded"))
+    assert AuditLog.list(:all)
+           |> Enum.count(&(&1.action == "command.succeeded")) == 1
   end
 
   test "command queue persists pending commands across process restarts" do

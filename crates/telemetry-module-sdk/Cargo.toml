@@ -1,0 +1,16 @@
+[package]
+name = "telemetry-module-sdk"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[lib]
+name = "telemetry_module_sdk"
+path = "src/lib.rs"
+
+[dependencies]
+telemetry-core = { path = "../telemetry-core" }
+
+[lints]
+workspace = true

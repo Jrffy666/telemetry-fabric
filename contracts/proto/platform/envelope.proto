@@ -1,0 +1,31 @@
+syntax = "proto3";
+
+package telemetry.fabric.platform.v1;
+
+import "google/protobuf/struct.proto";
+import "google/protobuf/timestamp.proto";
+import "platform/checkpoint.proto";
+import "platform/module.proto";
+import "platform/priority.proto";
+
+// Envelope is the stable cross-service wrapper for every platform event.
+// payload carries the domain event encoded with the schema identified by
+// event_type and schema_version.
+message Envelope {
+  string tenant_id = 1;
+  Module module = 2;
+  string source = 3;
+  string event_type = 4;
+  Priority priority = 5;
+  string schema_version = 6;
+  google.protobuf.Timestamp event_time = 7;
+  google.protobuf.Timestamp ingest_time = 8;
+  string dedupe_key = 9;
+  Checkpoint checkpoint = 10;
+  google.protobuf.Struct payload = 11;
+  map<string, string> attributes = 12;
+  string trace_id = 13;
+  string rule_version = 14;
+  repeated string matched_rules = 15;
+  string discard_reason = 16;
+}

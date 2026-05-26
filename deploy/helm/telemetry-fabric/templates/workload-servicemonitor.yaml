@@ -1,0 +1,55 @@
+{{- if and .Values.serviceMonitor.enabled .Values.crawler.enabled .Values.crawler.service.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "telemetry-fabric.crawlerName" . }}
+  {{- if .Values.serviceMonitor.namespace }}
+  namespace: {{ .Values.serviceMonitor.namespace | quote }}
+  {{- end }}
+  labels:
+    {{- include "telemetry-fabric.componentLabels" (dict "root" . "name" (include "telemetry-fabric.crawlerName" .) "component" "chain-crawler") | nindent 4 }}
+    {{- with .Values.serviceMonitor.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "telemetry-fabric.crawlerName" . }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  namespaceSelector:
+    matchNames:
+      - {{ .Release.Namespace | quote }}
+  endpoints:
+    - port: metrics
+      path: /metrics
+      interval: {{ .Values.serviceMonitor.interval | quote }}
+{{- end }}
+{{- if and .Values.serviceMonitor.enabled .Values.streamProcessor.enabled .Values.streamProcessor.service.enabled }}
+{{- if and .Values.crawler.enabled .Values.crawler.service.enabled }}
+---
+{{- end }}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "telemetry-fabric.streamProcessorName" . }}
+  {{- if .Values.serviceMonitor.namespace }}
+  namespace: {{ .Values.serviceMonitor.namespace | quote }}
+  {{- end }}
+  labels:
+    {{- include "telemetry-fabric.componentLabels" (dict "root" . "name" (include "telemetry-fabric.streamProcessorName" .) "component" "stream-processor") | nindent 4 }}
+    {{- with .Values.serviceMonitor.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "telemetry-fabric.streamProcessorName" . }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  namespaceSelector:
+    matchNames:
+      - {{ .Release.Namespace | quote }}
+  endpoints:
+    - port: metrics
+      path: /metrics
+      interval: {{ .Values.serviceMonitor.interval | quote }}
+{{- end }}

@@ -1,6 +1,6 @@
 apiVersion: v2
 name: telemetry-fabric
-description: Telemetry Fabric data-plane agent
+description: Telemetry Fabric platform, blockchain, storage, and observability deployment chart
 type: application
 version: 0.1.0
 appVersion: "0.1.0"

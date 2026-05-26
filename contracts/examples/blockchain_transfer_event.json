@@ -1,0 +1,60 @@
+{
+  "tenant_id": "tenant_demo",
+  "module": "MODULE_BLOCKCHAIN",
+  "source": "eth-mainnet-indexer-01",
+  "event_type": "blockchain.chain_event.transfer",
+  "priority": "PRIORITY_IMPORTANT",
+  "schema_version": "blockchain.chain_event.v1.0.0",
+  "event_time": "2026-05-25T03:15:30Z",
+  "ingest_time": "2026-05-25T03:15:32Z",
+  "dedupe_key": "ethereum:mainnet:20345678:0x8d12a4f2b5d0c9e7:3",
+  "checkpoint": {
+    "cursor": "ethereum/mainnet/block/20345678/log/3",
+    "source": "ethereum-mainnet",
+    "partition": "blocks-0",
+    "offset": "20345678",
+    "sequence": "3",
+    "attributes": {
+      "block_hash": "0x8ec1f9721f8d9bb01d34f3f174cb7ad4d498e11c6b5a94d8cebf43f26396b2a1",
+      "tx_hash": "0x8d12a4f2b5d0c9e7ad9ed0f79dce93be7d2e34e8fd72c9f316a52b1c4ac0e0d1"
+    }
+  },
+  "payload": {
+    "chain": "ethereum",
+    "network": "mainnet",
+    "chain_id": "1",
+    "block_number": "20345678",
+    "block_hash": "0x8ec1f9721f8d9bb01d34f3f174cb7ad4d498e11c6b5a94d8cebf43f26396b2a1",
+    "block_timestamp": "2026-05-25T03:15:18Z",
+    "tx_hash": "0x8d12a4f2b5d0c9e7ad9ed0f79dce93be7d2e34e8fd72c9f316a52b1c4ac0e0d1",
+    "tx_index": 42,
+    "log_index": 3,
+    "event_type": "transfer",
+    "from_address": "0x7a250d5630b4cf539739df2c5dacb4c659f2488d",
+    "to_address": "0x1111111254eeb25477b68fb85ed929f73a960582",
+    "contract_address": "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+    "token_address": "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+    "token_symbol": "USDC",
+    "token_standard": "TOKEN_STANDARD_ERC20",
+    "amount_raw": "2500000000",
+    "amount_decimal": "2500.000000",
+    "amount_usd": "2500.00",
+    "gas_used": "81742",
+    "gas_price": "18200000000",
+    "success": true,
+    "finality_status": "FINALITY_STATUS_CONFIRMED",
+    "confirmations": 18,
+    "source_rpc": "alchemy-us-east-1",
+    "reorged": false
+  },
+  "attributes": {
+    "adapter_id": "evm-json-rpc",
+    "region": "us-east-1"
+  },
+  "trace_id": "4f3a3f7297ce4a3e8b4d9ccbf9f3d2a1",
+  "rule_version": "ruleset-2026-05-25",
+  "matched_rules": [
+    "large-usdc-transfer-v3"
+  ],
+  "discard_reason": ""
+}

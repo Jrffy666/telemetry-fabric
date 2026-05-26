@@ -1,0 +1,35 @@
+syntax = "proto3";
+
+package telemetry.fabric.blockchain.v1;
+
+import "google/protobuf/timestamp.proto";
+
+enum NodeStatus {
+  NODE_STATUS_UNSPECIFIED = 0;
+  NODE_STATUS_HEALTHY = 1;
+  NODE_STATUS_DEGRADED = 2;
+  NODE_STATUS_UNHEALTHY = 3;
+  NODE_STATUS_OFFLINE = 4;
+}
+
+message NodeHealth {
+  string node_id = 1;
+  string chain = 2;
+  string network = 3;
+  uint64 chain_id = 4;
+  string rpc_endpoint_id = 5;
+  string source_rpc = 6;
+  NodeStatus status = 7;
+  bool synced = 8;
+  uint64 latest_block = 9;
+  uint64 finalized_block = 10;
+  uint64 block_lag = 11;
+  uint32 peer_count = 12;
+  uint32 latency_ms = 13;
+  double error_rate = 14;
+  string client_version = 15;
+  string last_error = 16;
+  google.protobuf.Timestamp checked_at = 17;
+  repeated string warnings = 18;
+  map<string, string> attributes = 19;
+}

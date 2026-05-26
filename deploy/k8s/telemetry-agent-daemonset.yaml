@@ -5,6 +5,7 @@ metadata:
   namespace: observability
   labels:
     app.kubernetes.io/name: telemetry-fabric-agent
+automountServiceAccountToken: false
 ---
 apiVersion: apps/v1
 kind: DaemonSet
@@ -12,6 +13,10 @@ metadata:
   name: telemetry-fabric-agent
   namespace: observability
 spec:
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 10%
   selector:
     matchLabels:
       app.kubernetes.io/name: telemetry-fabric-agent
@@ -21,6 +26,7 @@ spec:
         app.kubernetes.io/name: telemetry-fabric-agent
     spec:
       serviceAccountName: telemetry-fabric-agent
+      automountServiceAccountToken: false
       terminationGracePeriodSeconds: 35
       securityContext:
         fsGroup: 65532
@@ -29,6 +35,7 @@ spec:
       containers:
         - name: agent
           image: telemetry-fabric/agent:0.1.0
+          imagePullPolicy: IfNotPresent
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
@@ -67,12 +74,37 @@ spec:
               port: health
             initialDelaySeconds: 10
             periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 3
           readinessProbe:
             httpGet:
               path: /readyz
               port: health
             initialDelaySeconds: 5
             periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 3
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: health
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 24
+          lifecycle:
+            preStop:
+              exec:
+                command:
+                  - /bin/sh
+                  - -c
+                  - sleep 5
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
           volumeMounts:
             - name: queue
               mountPath: /var/lib/telemetry-fabric

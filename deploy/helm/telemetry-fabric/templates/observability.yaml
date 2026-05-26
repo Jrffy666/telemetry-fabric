@@ -1,0 +1,187 @@
+{{- if .Values.observability.prometheus.enabled }}
+{{- $name := include "telemetry-fabric.prometheusName" . -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $name }}-config
+  labels:
+    {{- include "telemetry-fabric.componentLabels" (dict "root" . "name" $name "component" "prometheus") | nindent 4 }}
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval: 30s
+    scrape_configs:
+      - job_name: telemetry-agent
+        metrics_path: /metrics
+        static_configs:
+          - targets:
+              - {{ include "telemetry-fabric.name" . }}:{{ .Values.service.healthPort }}
+      {{- if .Values.controlPlane.enabled }}
+      - job_name: telemetry-control-plane
+        metrics_path: /metrics
+        static_configs:
+          - targets:
+              - {{ include "telemetry-fabric.controlPlaneName" . }}:{{ .Values.controlPlane.service.port }}
+      {{- end }}
+      {{- if and .Values.crawler.enabled .Values.crawler.service.enabled }}
+      - job_name: telemetry-chain-crawler
+        metrics_path: /metrics
+        static_configs:
+          - targets:
+              - {{ include "telemetry-fabric.crawlerName" . }}:{{ .Values.crawler.service.metricsPort }}
+      {{- end }}
+      {{- if and .Values.streamProcessor.enabled .Values.streamProcessor.service.enabled }}
+      - job_name: telemetry-stream-processor
+        metrics_path: /metrics
+        static_configs:
+          - targets:
+              - {{ include "telemetry-fabric.streamProcessorName" . }}:{{ .Values.streamProcessor.service.metricsPort }}
+      {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "telemetry-fabric.componentLabels" (dict "root" . "name" $name "component" "prometheus") | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: {{ $name }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+  ports:
+    - name: http
+      port: 9090
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "telemetry-fabric.componentLabels" (dict "root" . "name" $name "component" "prometheus") | nindent 4 }}
+spec:
+  serviceName: {{ $name }}
+  replicas: {{ .Values.observability.prometheus.replicas }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ $name }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        {{- include "telemetry-fabric.componentLabels" (dict "root" . "name" $name "component" "prometheus") | nindent 8 }}
+    spec:
+      containers:
+        - name: prometheus
+          image: "{{ .Values.observability.prometheus.image.repository }}:{{ .Values.observability.prometheus.image.tag }}"
+          imagePullPolicy: {{ .Values.observability.prometheus.image.pullPolicy }}
+          args:
+            - --config.file=/etc/prometheus/prometheus.yml
+            - --storage.tsdb.path=/prometheus
+            - --storage.tsdb.retention.time={{ .Values.observability.prometheus.retention }}
+          ports:
+            - name: http
+              containerPort: 9090
+          readinessProbe:
+            httpGet:
+              path: /-/ready
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /-/healthy
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.observability.prometheus.resources | nindent 12 }}
+          volumeMounts:
+            - name: config
+              mountPath: /etc/prometheus
+              readOnly: true
+            - name: data
+              mountPath: /prometheus
+      volumes:
+        - name: config
+          configMap:
+            name: {{ $name }}-config
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        resources:
+          requests:
+            storage: {{ .Values.observability.prometheus.storageSize | quote }}
+{{- end }}
+{{- if .Values.observability.grafana.enabled }}
+{{- if .Values.observability.prometheus.enabled }}
+---
+{{- end }}
+{{- $name := include "telemetry-fabric.grafanaName" . -}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "telemetry-fabric.componentLabels" (dict "root" . "name" $name "component" "grafana") | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: {{ $name }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+  ports:
+    - name: http
+      port: 3000
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "telemetry-fabric.componentLabels" (dict "root" . "name" $name "component" "grafana") | nindent 4 }}
+spec:
+  replicas: {{ .Values.observability.grafana.replicas }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ $name }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        {{- include "telemetry-fabric.componentLabels" (dict "root" . "name" $name "component" "grafana") | nindent 8 }}
+    spec:
+      containers:
+        - name: grafana
+          image: "{{ .Values.observability.grafana.image.repository }}:{{ .Values.observability.grafana.image.tag }}"
+          imagePullPolicy: {{ .Values.observability.grafana.image.pullPolicy }}
+          {{- if .Values.observability.grafana.adminSecret.name }}
+          env:
+            - name: GF_SECURITY_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.observability.grafana.adminSecret.name | quote }}
+                  key: {{ .Values.observability.grafana.adminSecret.key | quote }}
+          {{- end }}
+          ports:
+            - name: http
+              containerPort: 3000
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.observability.grafana.resources | nindent 12 }}
+{{- end }}

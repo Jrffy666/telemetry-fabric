@@ -1,0 +1,45 @@
+groups:
+  - name: telemetry-fabric.rpc
+    interval: 30s
+    rules:
+      - record: crawler:rpc_latency_ms:max_5m
+        expr: max_over_time(crawler_rpc_latency_ms[5m])
+
+      - record: crawler:rpc_error_rate:5m
+        expr: sum by (chain, network, crawler, endpoint) (rate(crawler_rpc_errors_total[5m]))
+
+      - record: crawler:rpc_rate_limited_rate:5m
+        expr: sum by (chain, network, crawler, endpoint) (rate(crawler_rpc_rate_limited_total[5m]))
+
+      - alert: RpcEndpointUnhealthy
+        expr: max by (chain, network, crawler, endpoint) (crawler:rpc_latency_ms:max_5m) > 5000 or crawler:rpc_error_rate:5m > 0.1 or crawler:rpc_rate_limited_rate:5m > 0.05
+        for: 5m
+        labels:
+          severity: critical
+          service: crawler
+        annotations:
+          summary: "RPC endpoint is unhealthy"
+          description: "RPC endpoint {{ $labels.endpoint }} for {{ $labels.chain }}/{{ $labels.network }} is slow, erroring, or rate limiting crawler traffic."
+          runbook_url: "https://runbooks.example.com/telemetry-fabric/rpc-endpoint-unhealthy"
+
+      - alert: RpcRateLimitSpike
+        expr: increase(crawler_rpc_rate_limited_total[10m]) > 50
+        for: 5m
+        labels:
+          severity: warning
+          service: crawler
+        annotations:
+          summary: "RPC rate limit spike"
+          description: "Crawler {{ $labels.crawler }} has a spike in RPC rate limit responses from {{ $labels.endpoint }}."
+          runbook_url: "https://runbooks.example.com/telemetry-fabric/rpc-rate-limit"
+
+      - alert: WebsocketReconnectSpike
+        expr: increase(crawler_ws_reconnect_total[10m]) > 10
+        for: 5m
+        labels:
+          severity: warning
+          service: crawler
+        annotations:
+          summary: "Crawler websocket reconnect spike"
+          description: "Crawler {{ $labels.crawler }} is reconnecting frequently to websocket endpoint {{ $labels.endpoint }}."
+          runbook_url: "https://runbooks.example.com/telemetry-fabric/ws-reconnect"

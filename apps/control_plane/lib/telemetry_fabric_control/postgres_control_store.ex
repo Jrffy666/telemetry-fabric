@@ -21,6 +21,8 @@ defmodule TelemetryFabricControl.PostgresControlStore do
   alias TelemetryFabricControl.Schema.PipelineVersion
   alias TelemetryFabricControl.Schema.Tenant
 
+  @default_command_lease_ms 30_000
+
   def register_agent(attrs, repo \\ Repo) when is_map(attrs) do
     now = timestamp()
 
@@ -178,16 +180,22 @@ defmodule TelemetryFabricControl.PostgresControlStore do
   def drain_commands(agent_id, repo \\ Repo) do
     result =
       repo.transaction(fn ->
+        delivered_at = timestamp()
+        lease_deadline = lease_deadline(delivered_at)
+
         pending =
           repo.all(
             from(command in AgentCommand,
-              where: command.agent_id == ^agent_id and command.status == "pending",
+              where:
+                command.agent_id == ^agent_id and
+                  (command.status == "pending" or
+                     (command.status == "delivered" and
+                        (is_nil(command.delivered_at) or command.delivered_at <= ^lease_deadline))),
               order_by: [asc: command.inserted_at, asc: command.command_id],
               lock: "FOR UPDATE"
             )
           )
 
-        delivered_at = timestamp()
         ids = Enum.map(pending, & &1.command_id)
 
         if ids != [] do
@@ -227,28 +235,32 @@ defmodule TelemetryFabricControl.PostgresControlStore do
           repo.rollback(:not_found)
         end
 
-        acknowledged_at = timestamp()
-        status = if success, do: "succeeded", else: "failed"
-        last_error = normalize_ack_error(success, message)
+        if terminal?(command) do
+          command_from_row(command)
+        else
+          acknowledged_at = timestamp()
+          status = if success, do: "succeeded", else: "failed"
+          last_error = normalize_ack_error(success, message)
 
-        repo.update_all(
-          from(row in AgentCommand, where: row.command_id == ^command_id),
-          set: [status: status, acknowledged_at: acknowledged_at, last_error: last_error]
-        )
+          repo.update_all(
+            from(row in AgentCommand, where: row.command_id == ^command_id),
+            set: [status: status, acknowledged_at: acknowledged_at, last_error: last_error]
+          )
 
-        acknowledged =
-          command
-          |> command_from_row()
-          |> ControlCommand.mark_acknowledged(success, message, acknowledged_at)
+          acknowledged =
+            command
+            |> command_from_row()
+            |> ControlCommand.mark_acknowledged(success, message, acknowledged_at)
 
-        audit_command!(
-          repo,
-          acknowledged,
-          if(success, do: "command.succeeded", else: "command.failed"),
-          agent_id
-        )
+          audit_command!(
+            repo,
+            acknowledged,
+            if(success, do: "command.succeeded", else: "command.failed"),
+            agent_id
+          )
 
-        acknowledged
+          acknowledged
+        end
       end)
 
     unwrap_transaction(result)
@@ -386,6 +398,25 @@ defmodule TelemetryFabricControl.PostgresControlStore do
 
   defp normalize_ack_error(false, message) when is_binary(message), do: String.trim(message)
   defp normalize_ack_error(false, _message), do: nil
+
+  defp terminal?(%AgentCommand{} = command), do: command.status in ["succeeded", "failed"]
+
+  defp lease_deadline(%DateTime{} = now) do
+    DateTime.add(now, -command_lease_ms() * 1_000, :microsecond)
+  end
+
+  defp command_lease_ms do
+    case System.get_env("TELEMETRY_FABRIC_CONTROL_COMMAND_LEASE_MS") do
+      nil ->
+        @default_command_lease_ms
+
+      value ->
+        case Integer.parse(value) do
+          {lease_ms, ""} when lease_ms > 0 -> lease_ms
+          _invalid -> @default_command_lease_ms
+        end
+    end
+  end
 
   defp require_same_tenant(_agent, nil), do: :ok
 

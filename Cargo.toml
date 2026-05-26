@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
   "crates/telemetry-core",
+  "crates/telemetry-module-sdk",
   "crates/telemetry-buffer",
   "crates/telemetry-otlp",
   "crates/telemetry-processors",

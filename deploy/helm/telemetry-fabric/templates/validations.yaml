@@ -6,6 +6,9 @@
 {{- if and (ne $storage "postgres") (gt (int .Values.controlPlane.replicas) 1) -}}
 {{- fail "controlPlane.replicas > 1 requires controlPlane.storage=postgres; OTP/file-backed storage is single-writer only" -}}
 {{- end -}}
+{{- if and (ne $storage "postgres") .Values.controlPlane.hpa.enabled -}}
+{{- fail "controlPlane.hpa.enabled=true requires controlPlane.storage=postgres; OTP/file-backed storage is single-writer only" -}}
+{{- end -}}
 {{- if and (eq $storage "postgres") (not .Values.controlPlane.databaseUrlSecret.name) -}}
 {{- fail "controlPlane.storage=postgres requires controlPlane.databaseUrlSecret.name" -}}
 {{- end -}}
@@ -17,5 +20,8 @@
 {{- end -}}
 {{- if and .Values.controlPlane.tls.requireClientAuth (not .Values.controlPlane.tls.secretName) -}}
 {{- fail "controlPlane mTLS requires controlPlane.tls.secretName with ca.crt, tls.crt, and tls.key" -}}
+{{- end -}}
+{{- if and .Values.controlPlane.ingress.enabled (not .Values.controlPlane.ingress.hosts) -}}
+{{- fail "controlPlane.ingress.enabled=true requires at least one controlPlane.ingress.hosts entry" -}}
 {{- end -}}
 {{- end -}}

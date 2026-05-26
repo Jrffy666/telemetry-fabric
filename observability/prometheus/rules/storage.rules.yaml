@@ -1,0 +1,31 @@
+groups:
+  - name: telemetry-fabric.storage
+    interval: 30s
+    rules:
+      - record: crawler:duplicate_event_rate:5m
+        expr: sum by (chain, network, crawler) (rate(crawler_duplicate_events_total[5m]))
+
+      - record: crawler:clickhouse_insert_error_rate:5m
+        expr: sum by (cluster, database, table) (rate(crawler_clickhouse_insert_errors_total[5m])) or sum by (cluster, database, table) (rate(clickhouse_insert_errors_total[5m]))
+
+      - alert: ClickHouseInsertFailure
+        expr: crawler:clickhouse_insert_error_rate:5m > 0
+        for: 5m
+        labels:
+          severity: critical
+          service: storage
+        annotations:
+          summary: "ClickHouse insert failures detected"
+          description: "ClickHouse insert failures are occurring for crawler materialization target {{ $labels.database }}/{{ $labels.table }}."
+          runbook_url: "https://runbooks.example.com/telemetry-fabric/clickhouse-insert-failure"
+
+      - alert: DuplicateEventsHigh
+        expr: crawler:duplicate_event_rate:5m > 10
+        for: 10m
+        labels:
+          severity: warning
+          service: crawler
+        annotations:
+          summary: "Crawler duplicate event rate is high"
+          description: "Crawler {{ $labels.crawler }} is producing duplicate events above the expected deduplication budget."
+          runbook_url: "https://runbooks.example.com/telemetry-fabric/duplicate-events"

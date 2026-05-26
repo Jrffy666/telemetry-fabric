@@ -42,6 +42,7 @@ enum HttpScheme {
 pub struct ControlClientSecurity {
     pub auth_token: Option<String>,
     pub tls: TlsConfig,
+    pub config_signing_key: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -82,6 +83,7 @@ pub struct ConfigUpdate {
     pub version: u64,
     pub pipeline_config: String,
     pub checksum: String,
+    pub signature: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -181,6 +183,13 @@ impl ControlClient {
         Ok(())
     }
 
+    pub fn validate_config_update(
+        &self,
+        update: &ConfigUpdate,
+    ) -> Result<PipelineConfig, DynError> {
+        validate_config_update(update, self.security.config_signing_key.as_deref())
+    }
+
     async fn post_json(&self, path: &str, body: &str) -> Result<Value, DynError> {
         let request = self.render_post_request(path, body)?;
         let mut stream = self
@@ -228,7 +237,10 @@ impl ControlClient {
     }
 }
 
-pub fn validate_config_update(update: &ConfigUpdate) -> Result<PipelineConfig, DynError> {
+pub fn validate_config_update(
+    update: &ConfigUpdate,
+    signing_key: Option<&str>,
+) -> Result<PipelineConfig, DynError> {
     let actual = sha256_hex(update.pipeline_config.as_bytes());
     if !actual.eq_ignore_ascii_case(&update.checksum) {
         return Err(ControlClientError(format!(
@@ -238,7 +250,34 @@ pub fn validate_config_update(update: &ConfigUpdate) -> Result<PipelineConfig, D
         .into());
     }
 
+    validate_config_signature(update, signing_key)?;
     parse_pipeline_config(&update.pipeline_config)
+}
+
+fn validate_config_signature(
+    update: &ConfigUpdate,
+    signing_key: Option<&str>,
+) -> Result<(), DynError> {
+    let Some(signing_key) = signing_key.filter(|value| !value.trim().is_empty()) else {
+        return Ok(());
+    };
+
+    let signature = update.signature.as_deref().ok_or_else(|| {
+        ControlClientError(
+            "control config signature is required when a signing key is configured".to_string(),
+        )
+    })?;
+    let expected = signature
+        .strip_prefix("hmac-sha256=")
+        .unwrap_or(signature)
+        .trim();
+    let actual = hmac_sha256_hex(signing_key.as_bytes(), update.pipeline_config.as_bytes());
+
+    if !constant_time_equal(expected.as_bytes(), actual.as_bytes()) {
+        return Err(ControlClientError("control config signature mismatch".to_string()).into());
+    }
+
+    Ok(())
 }
 
 fn parse_http_endpoint(endpoint: &str) -> Result<HttpEndpoint, DynError> {
@@ -441,6 +480,7 @@ fn parse_config_update_response(value: &Value) -> Result<Option<ConfigUpdate>, D
         version: get_u64(update, "version")?,
         pipeline_config: get_string(update, "pipeline_config")?.to_string(),
         checksum: get_string(update, "checksum")?.to_string(),
+        signature: get_optional_string(update, "signature").map(ToString::to_string),
     }))
 }
 
@@ -505,6 +545,10 @@ fn json_escape(value: &str) -> String {
 }
 
 fn sha256_hex(input: &[u8]) -> String {
+    hex_lower(&sha256_digest(input))
+}
+
+fn sha256_digest(input: &[u8]) -> [u8; 32] {
     let mut state = [
         0x6a09e667_u32,
         0xbb67ae85,
@@ -588,11 +632,59 @@ fn sha256_hex(input: &[u8]) -> String {
         state[7] = state[7].wrapping_add(h);
     }
 
-    let mut output = String::with_capacity(64);
-    for word in state {
-        output.push_str(&format!("{word:08x}"));
+    let mut output = [0_u8; 32];
+    for (index, word) in state.iter().enumerate() {
+        output[index * 4..index * 4 + 4].copy_from_slice(&word.to_be_bytes());
     }
     output
+}
+
+fn hmac_sha256_hex(key: &[u8], message: &[u8]) -> String {
+    let mut key_block = [0_u8; 64];
+    if key.len() > key_block.len() {
+        key_block[..32].copy_from_slice(&sha256_digest(key));
+    } else {
+        key_block[..key.len()].copy_from_slice(key);
+    }
+
+    let mut inner_pad = [0x36_u8; 64];
+    let mut outer_pad = [0x5c_u8; 64];
+    for index in 0..key_block.len() {
+        inner_pad[index] ^= key_block[index];
+        outer_pad[index] ^= key_block[index];
+    }
+
+    let mut inner = Vec::with_capacity(inner_pad.len() + message.len());
+    inner.extend_from_slice(&inner_pad);
+    inner.extend_from_slice(message);
+    let inner_hash = sha256_digest(&inner);
+
+    let mut outer = Vec::with_capacity(outer_pad.len() + inner_hash.len());
+    outer.extend_from_slice(&outer_pad);
+    outer.extend_from_slice(&inner_hash);
+
+    hex_lower(&sha256_digest(&outer))
+}
+
+fn hex_lower(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut output = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        output.push(HEX[(byte >> 4) as usize] as char);
+        output.push(HEX[(byte & 0x0f) as usize] as char);
+    }
+    output
+}
+
+fn constant_time_equal(left: &[u8], right: &[u8]) -> bool {
+    if left.len() != right.len() {
+        return false;
+    }
+
+    left.iter()
+        .zip(right.iter())
+        .fold(0_u8, |acc, (left, right)| acc | (left ^ right))
+        == 0
 }
 
 const SHA256_K: [u32; 64] = [
@@ -662,20 +754,75 @@ routes:
     exporters: ["stdout"]
 "#;
         let checksum = sha256_hex(payload.as_bytes());
+        let signature = hmac_sha256_hex(b"test-signing-key", payload.as_bytes());
         let response = serde_yaml::from_str(&format!(
-            "{{\"update\":{{\"version\":1,\"pipeline_config\":{},\"checksum\":\"{}\"}}}}",
+            "{{\"update\":{{\"version\":1,\"pipeline_config\":{},\"checksum\":\"{}\",\"signature\":\"{}\"}}}}",
             yaml_json_string(payload),
-            checksum
+            checksum,
+            signature
         ))?;
 
         let update = parse_config_update_response(&response)?.ok_or_else(|| {
             ControlClientError("expected config update in test response".to_string())
         })?;
-        let config = validate_config_update(&update)?;
+        assert_eq!(update.signature.as_deref(), Some(signature.as_str()));
+
+        let config = validate_config_update(&update, Some("test-signing-key"))?;
 
         assert_eq!(config.tenant_id, "payments-prod");
         assert_eq!(config.name, "default");
         Ok(())
+    }
+
+    #[test]
+    fn rejects_config_update_when_signature_is_missing_or_invalid() {
+        let payload = r#"
+tenant: "payments-prod"
+pipeline: "default"
+receivers:
+  tf-line:
+    protocol: "tf_line"
+    endpoint: "127.0.0.1:4319"
+exporters:
+  stdout:
+    protocol: "stdout"
+    endpoint: "stdout://local"
+routes:
+  traces:
+    exporters: ["stdout"]
+"#;
+        let checksum = sha256_hex(payload.as_bytes());
+        let mut update = ConfigUpdate {
+            version: 1,
+            pipeline_config: payload.to_string(),
+            checksum,
+            signature: None,
+        };
+
+        let missing_signature = validate_config_update(&update, Some("test-signing-key"));
+        assert!(
+            missing_signature
+                .err()
+                .map(|err| err.to_string().contains("signature is required"))
+                .unwrap_or(false)
+        );
+
+        update.signature = Some("not-a-valid-signature".to_string());
+        let invalid_signature = validate_config_update(&update, Some("test-signing-key"));
+        assert!(
+            invalid_signature
+                .err()
+                .map(|err| err.to_string().contains("signature mismatch"))
+                .unwrap_or(false)
+        );
+    }
+
+    #[test]
+    fn hmac_sha256_matches_known_vector() {
+        assert_eq!(
+            hmac_sha256_hex(b"key", b"The quick brown fox jumps over the lazy dog"),
+            "f7bc83f430538424b13298e6aa6fb143ef4d59a14946175997479dbc2d1a3cd8"
+        );
     }
 
     #[test]

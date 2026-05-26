@@ -13,6 +13,25 @@ agent:
   controlHeartbeatIntervalMs: 5000
   shutdownDrainTimeoutMs: 30000
   terminationGracePeriodSeconds: 35
+  lifecycle:
+    preStopSleepSeconds: 5
+  probes:
+    liveness:
+      initialDelaySeconds: 10
+      periodSeconds: 10
+      timeoutSeconds: 2
+      failureThreshold: 3
+    readiness:
+      initialDelaySeconds: 5
+      periodSeconds: 10
+      timeoutSeconds: 2
+      failureThreshold: 3
+    startup:
+      enabled: true
+      initialDelaySeconds: 0
+      periodSeconds: 5
+      timeoutSeconds: 2
+      failureThreshold: 24
   agentIdFromPodName: true
   queueDir: "/var/lib/telemetry-fabric/queue"
   queueHostPath: "/var/lib/telemetry-fabric"
@@ -24,6 +43,7 @@ agent:
     mountPath: /etc/telemetry-fabric/agent
   extraArgs: []
   extraEnv: []
+  extraEnvFrom: []
   podAnnotations: {}
   nodeSelector: {}
   tolerations: []
@@ -44,6 +64,7 @@ agent:
     create: true
     name: ""
     annotations: {}
+    automountServiceAccountToken: false
   podSecurityContext:
     fsGroup: 65532
     seccompProfile:
@@ -69,13 +90,49 @@ controlPlane:
   postgresSync: "true"
   postgresSyncIntervalMs: 5000
   terminationGracePeriodSeconds: 30
+  lifecycle:
+    preStopSleepSeconds: 5
+  probes:
+    liveness:
+      initialDelaySeconds: 10
+      periodSeconds: 10
+      timeoutSeconds: 2
+      failureThreshold: 3
+    readiness:
+      initialDelaySeconds: 5
+      periodSeconds: 10
+      timeoutSeconds: 2
+      failureThreshold: 3
+    startup:
+      enabled: true
+      initialDelaySeconds: 0
+      periodSeconds: 5
+      timeoutSeconds: 2
+      failureThreshold: 24
   extraEnv: []
+  extraEnvFrom: []
+  config:
+    create: false
+    name: ""
+    data: {}
   podAnnotations: {}
   nodeSelector: {}
   tolerations: []
   affinity: {}
   priorityClassName: ""
   strategy: {}
+  hpa:
+    enabled: false
+    minReplicas: 2
+    maxReplicas: 6
+    targetCPUUtilizationPercentage: 70
+    targetMemoryUtilizationPercentage: 80
+  ingress:
+    enabled: false
+    className: ""
+    annotations: {}
+    hosts: []
+    tls: []
   databaseUrlSecret:
     name: ""
     key: database-url
@@ -105,6 +162,7 @@ controlPlane:
     create: true
     name: ""
     annotations: {}
+    automountServiceAccountToken: false
   podDisruptionBudget:
     enabled: true
     minAvailable: 1
@@ -148,3 +206,281 @@ resources:
   limits:
     cpu: 500m
     memory: 512Mi
+
+crawler:
+  enabled: false
+  image:
+    repository: telemetry-fabric/chain-crawler-go
+    tag: "0.1.0"
+    pullPolicy: IfNotPresent
+  replicas: 2
+  command: []
+  args: []
+  env:
+    - name: TELEMETRY_FABRIC_CHAIN_NAME
+      value: ethereum
+    - name: TELEMETRY_FABRIC_CHAIN_NETWORK
+      value: mainnet
+  extraEnvFrom: []
+  secrets:
+    create: false
+    name: ""
+    stringData: {}
+  configMap:
+    create: true
+    name: ""
+    mountPath: /etc/telemetry-fabric/crawler
+    data:
+      crawler.yaml: |
+        chain: ethereum
+        network: mainnet
+        finality_depth: 64
+        max_block_range: 1000
+  service:
+    enabled: true
+    type: ClusterIP
+    port: 8080
+    metricsPort: 9090
+  probes:
+    liveness:
+      path: /healthz
+      port: http
+      initialDelaySeconds: 15
+      periodSeconds: 10
+      timeoutSeconds: 2
+      failureThreshold: 3
+    readiness:
+      path: /readyz
+      port: http
+      initialDelaySeconds: 5
+      periodSeconds: 10
+      timeoutSeconds: 2
+      failureThreshold: 3
+    startup:
+      enabled: true
+      path: /healthz
+      port: http
+      initialDelaySeconds: 0
+      periodSeconds: 5
+      timeoutSeconds: 2
+      failureThreshold: 24
+  terminationGracePeriodSeconds: 45
+  lifecycle:
+    preStopSleepSeconds: 10
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  hpa:
+    enabled: false
+    minReplicas: 2
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 70
+    targetMemoryUtilizationPercentage: 80
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 1
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  priorityClassName: ""
+  podAnnotations: {}
+  resources:
+    requests:
+      cpu: 250m
+      memory: 256Mi
+    limits:
+      cpu: "1"
+      memory: 1Gi
+  podSecurityContext:
+    fsGroup: 65532
+    seccompProfile:
+      type: RuntimeDefault
+  securityContext:
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
+    runAsNonRoot: true
+    capabilities:
+      drop:
+        - ALL
+  serviceAccount:
+    create: true
+    name: ""
+    annotations: {}
+    automountServiceAccountToken: false
+
+streamProcessor:
+  enabled: false
+  image:
+    repository: telemetry-fabric/stream-processor
+    tag: "0.1.0"
+    pullPolicy: IfNotPresent
+  replicas: 2
+  command: []
+  args: []
+  env: []
+  extraEnvFrom: []
+  secrets:
+    create: false
+    name: ""
+    stringData: {}
+  configMap:
+    create: true
+    name: ""
+    mountPath: /etc/telemetry-fabric/stream-processor
+    data:
+      processor.yaml: |
+        input_topic: chain.events.raw
+        output_topics:
+          critical: chain.events.critical
+          important: chain.events.important
+          aggregate: chain.events.aggregate
+  service:
+    enabled: true
+    type: ClusterIP
+    port: 8080
+    metricsPort: 9090
+  probes:
+    liveness:
+      path: /healthz
+      port: http
+      initialDelaySeconds: 15
+      periodSeconds: 10
+      timeoutSeconds: 2
+      failureThreshold: 3
+    readiness:
+      path: /readyz
+      port: http
+      initialDelaySeconds: 5
+      periodSeconds: 10
+      timeoutSeconds: 2
+      failureThreshold: 3
+    startup:
+      enabled: true
+      path: /healthz
+      port: http
+      initialDelaySeconds: 0
+      periodSeconds: 5
+      timeoutSeconds: 2
+      failureThreshold: 24
+  terminationGracePeriodSeconds: 45
+  lifecycle:
+    preStopSleepSeconds: 10
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  hpa:
+    enabled: false
+    minReplicas: 2
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 70
+    targetMemoryUtilizationPercentage: 80
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 1
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  priorityClassName: ""
+  podAnnotations: {}
+  resources:
+    requests:
+      cpu: 250m
+      memory: 256Mi
+    limits:
+      cpu: "1"
+      memory: 1Gi
+  podSecurityContext:
+    fsGroup: 65532
+    seccompProfile:
+      type: RuntimeDefault
+  securityContext:
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
+    runAsNonRoot: true
+    capabilities:
+      drop:
+        - ALL
+  serviceAccount:
+    create: true
+    name: ""
+    annotations: {}
+    automountServiceAccountToken: false
+
+storage:
+  redpanda:
+    enabled: false
+    image:
+      repository: docker.redpanda.com/redpandadata/redpanda
+      tag: "v24.3.1"
+      pullPolicy: IfNotPresent
+    replicas: 1
+    storageSize: 20Gi
+    storageClass: ""
+    resources:
+      requests:
+        cpu: 500m
+        memory: 1Gi
+      limits:
+        cpu: "2"
+        memory: 2Gi
+    nodeSelector: {}
+    tolerations: []
+    affinity: {}
+  clickhouse:
+    enabled: false
+    image:
+      repository: clickhouse/clickhouse-server
+      tag: "24.12"
+      pullPolicy: IfNotPresent
+    replicas: 1
+    storageSize: 50Gi
+    storageClass: ""
+    resources:
+      requests:
+        cpu: 500m
+        memory: 1Gi
+      limits:
+        cpu: "2"
+        memory: 4Gi
+    nodeSelector: {}
+    tolerations: []
+    affinity: {}
+
+observability:
+  prometheus:
+    enabled: false
+    image:
+      repository: prom/prometheus
+      tag: "v2.55.1"
+      pullPolicy: IfNotPresent
+    replicas: 1
+    retention: 15d
+    storageSize: 20Gi
+    resources:
+      requests:
+        cpu: 250m
+        memory: 512Mi
+      limits:
+        cpu: "1"
+        memory: 2Gi
+  grafana:
+    enabled: false
+    image:
+      repository: grafana/grafana
+      tag: "11.4.0"
+      pullPolicy: IfNotPresent
+    replicas: 1
+    adminSecret:
+      name: ""
+      key: admin-password
+    resources:
+      requests:
+        cpu: 100m
+        memory: 256Mi
+      limits:
+        cpu: 500m
+        memory: 512Mi

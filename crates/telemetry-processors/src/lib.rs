@@ -3,6 +3,7 @@ use std::fmt::{Display, Formatter};
 use std::time::{Duration, Instant};
 use std::{cmp, collections::BTreeMap};
 use telemetry_core::{PipelineConfig, ProcessorKind, TelemetryRecord};
+use telemetry_module_sdk::{EventEnvelope, Priority};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ProcessingError {
@@ -270,6 +271,144 @@ fn estimate_record_bytes(record: &TelemetryRecord) -> usize {
     record.tenant_id.len() + record.body.len() + attributes + 32
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PriorityRoute {
+    pub name: String,
+    pub module: Option<String>,
+    pub source: Option<String>,
+    pub event_type: Option<String>,
+    pub min_priority: Priority,
+    pub exporters: Vec<String>,
+}
+
+impl PriorityRoute {
+    pub fn new(name: impl Into<String>, exporters: impl IntoIterator<Item = String>) -> Self {
+        Self {
+            name: name.into(),
+            module: None,
+            source: None,
+            event_type: None,
+            min_priority: Priority::Low,
+            exporters: exporters.into_iter().collect(),
+        }
+    }
+
+    pub fn for_module(mut self, module: impl Into<String>) -> Self {
+        self.module = Some(module.into());
+        self
+    }
+
+    pub fn for_source(mut self, source: impl Into<String>) -> Self {
+        self.source = Some(source.into());
+        self
+    }
+
+    pub fn for_event_type(mut self, event_type: impl Into<String>) -> Self {
+        self.event_type = Some(event_type.into());
+        self
+    }
+
+    pub fn with_min_priority(mut self, min_priority: Priority) -> Self {
+        self.min_priority = min_priority;
+        self
+    }
+
+    fn matches(&self, envelope: &EventEnvelope) -> bool {
+        envelope.priority >= self.min_priority
+            && self
+                .module
+                .as_deref()
+                .is_none_or(|module| module == envelope.module)
+            && self
+                .source
+                .as_deref()
+                .is_none_or(|source| source == envelope.source)
+            && self
+                .event_type
+                .as_deref()
+                .is_none_or(|event_type| event_type == envelope.event_type)
+    }
+
+    fn specificity(&self) -> u8 {
+        u8::from(self.module.is_some())
+            + u8::from(self.source.is_some())
+            + u8::from(self.event_type.is_some())
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct GenericPriorityRouter {
+    routes: Vec<PriorityRoute>,
+    default_exporters: Vec<String>,
+}
+
+impl GenericPriorityRouter {
+    pub fn new(default_exporters: impl IntoIterator<Item = String>) -> Self {
+        Self {
+            routes: Vec::new(),
+            default_exporters: default_exporters.into_iter().collect(),
+        }
+    }
+
+    pub fn with_route(mut self, route: PriorityRoute) -> Self {
+        self.routes.push(route);
+        self
+    }
+
+    pub fn push_route(&mut self, route: PriorityRoute) {
+        self.routes.push(route);
+    }
+
+    pub fn exporters_for(&self, envelope: &EventEnvelope) -> Result<Vec<String>, ProcessingError> {
+        envelope
+            .validate()
+            .map_err(|err| ProcessingError::InvalidProcessor(err.to_string()))?;
+
+        if !envelope.routing.preferred_exporters.is_empty() {
+            return Ok(unique_strings(
+                envelope.routing.preferred_exporters.iter().cloned(),
+            ));
+        }
+
+        let mut best_specificity = None;
+        let mut exporters = Vec::new();
+
+        for route in self.routes.iter().filter(|route| route.matches(envelope)) {
+            let specificity = route.specificity();
+            if best_specificity.is_none_or(|best| specificity > best) {
+                best_specificity = Some(specificity);
+                exporters.clear();
+            }
+            if best_specificity == Some(specificity) {
+                exporters.extend(route.exporters.iter().cloned());
+            }
+        }
+
+        if exporters.is_empty() {
+            exporters.extend(self.default_exporters.iter().cloned());
+        }
+
+        let exporters = unique_strings(exporters);
+        if exporters.is_empty() {
+            return Err(ProcessingError::InvalidProcessor(
+                "generic priority router selected no exporters".to_string(),
+            ));
+        }
+
+        Ok(exporters)
+    }
+}
+
+fn unique_strings(values: impl IntoIterator<Item = String>) -> Vec<String> {
+    let mut output = Vec::new();
+    for value in values {
+        if !output.contains(&value) {
+            output.push(value);
+        }
+    }
+    output
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -362,6 +501,75 @@ mod tests {
         assert!(chain.process(first)?.is_some());
         assert!(chain.process(second)?.is_none());
         assert_eq!(chain.dropped_records(), 1);
+        Ok(())
+    }
+
+    #[test]
+    fn generic_priority_router_prefers_envelope_exporter_hints() -> Result<(), Box<dyn Error>> {
+        let envelope = telemetry_module_sdk::EventEnvelope::new(
+            "tenant-a",
+            "payments",
+            "checkout",
+            "payment.authorized",
+            telemetry_module_sdk::Payload::json(br#"{"status":"ok"}"#.to_vec()),
+        )
+        .with_routing(
+            telemetry_module_sdk::RoutingMetadata::default()
+                .with_preferred_exporter("explicit-kafka"),
+        );
+        let router = GenericPriorityRouter::new(["default-file".to_string()]).with_route(
+            PriorityRoute::new("critical", ["critical-kafka".to_string()])
+                .with_min_priority(Priority::Critical),
+        );
+
+        let exporters = router.exporters_for(&envelope)?;
+
+        assert_eq!(exporters, vec!["explicit-kafka"]);
+        Ok(())
+    }
+
+    #[test]
+    fn generic_priority_router_selects_specific_module_route() -> Result<(), Box<dyn Error>> {
+        let envelope = telemetry_module_sdk::EventEnvelope::new(
+            "tenant-a",
+            "payments",
+            "checkout",
+            "payment.authorized",
+            telemetry_module_sdk::Payload::json(br#"{"status":"ok"}"#.to_vec()),
+        )
+        .with_priority(Priority::Important);
+        let router = GenericPriorityRouter::new(["default-file".to_string()])
+            .with_route(
+                PriorityRoute::new("important", ["important-kafka".to_string()])
+                    .with_min_priority(Priority::Important),
+            )
+            .with_route(
+                PriorityRoute::new("payments", ["payments-clickhouse".to_string()])
+                    .for_module("payments")
+                    .for_event_type("payment.authorized")
+                    .with_min_priority(Priority::Normal),
+            );
+
+        let exporters = router.exporters_for(&envelope)?;
+
+        assert_eq!(exporters, vec!["payments-clickhouse"]);
+        Ok(())
+    }
+
+    #[test]
+    fn generic_priority_router_uses_default_exporters() -> Result<(), Box<dyn Error>> {
+        let envelope = telemetry_module_sdk::EventEnvelope::new(
+            "tenant-a",
+            "inventory",
+            "worker",
+            "stock.changed",
+            telemetry_module_sdk::Payload::json(br#"{"sku":"A"}"#.to_vec()),
+        );
+        let router = GenericPriorityRouter::new(["default-file".to_string()]);
+
+        let exporters = router.exporters_for(&envelope)?;
+
+        assert_eq!(exporters, vec!["default-file"]);
         Ok(())
     }
 }

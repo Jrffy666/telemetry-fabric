@@ -1,0 +1,65 @@
+# Analytics Configuration
+
+Configuration can come from environment variables or YAML.
+
+## YAML
+
+Start from:
+
+```text
+services/analytics-python/config.example.yaml
+```
+
+Use a local uncommitted file for machine-specific values:
+
+```powershell
+$env:ANALYTICS_CONFIG="config.local.yaml"
+```
+
+Keep secrets such as `CLICKHOUSE_PASSWORD`, S3 keys, and Kafka credentials in
+environment variables or a secret manager.
+
+## Environment Variables
+
+ClickHouse:
+
+- `CLICKHOUSE_HOST`
+- `CLICKHOUSE_PORT`
+- `CLICKHOUSE_USER` or `CLICKHOUSE_USERNAME`
+- `CLICKHOUSE_PASSWORD`
+- `CLICKHOUSE_DATABASE`
+- `CLICKHOUSE_SECURE`
+- `CLICKHOUSE_CONNECT_TIMEOUT_SECONDS`
+- `CLICKHOUSE_SEND_RECEIVE_TIMEOUT_SECONDS`
+- `CLICKHOUSE_RETRY_ATTEMPTS`
+- `CLICKHOUSE_RETRY_BACKOFF_SECONDS`
+
+Kafka:
+
+- `KAFKA_BOOTSTRAP_SERVERS`
+- `KAFKA_GROUP_ID`
+- `KAFKA_TOPICS`
+- `KAFKA_AUTO_OFFSET_RESET`
+- `KAFKA_ENABLE_AUTO_COMMIT`
+- `KAFKA_ENABLE_AUTO_OFFSET_STORE`
+- `KAFKA_MAX_POLL_RECORDS`
+- `KAFKA_POLL_TIMEOUT_SECONDS`
+
+S3:
+
+- `S3_ENDPOINT_URL`
+- `S3_REGION`
+- `S3_ACCESS_KEY_ID`
+- `S3_SECRET_ACCESS_KEY`
+- `S3_SESSION_TOKEN`
+- `S3_DEFAULT_ROW_LIMIT`
+- `S3_BATCH_SIZE`
+
+Query safety:
+
+- `ANALYTICS_QUERY_DEFAULT_LIMIT`
+- `ANALYTICS_QUERY_MAX_LIMIT`
+- `ANALYTICS_QUERY_CHUNK_SIZE`
+- `ANALYTICS_QUERY_MAX_RESULT_ROWS`
+- `ANALYTICS_QUERY_TIMEOUT_SECONDS`
+- `ANALYTICS_QUERY_REQUIRE_LIMIT`

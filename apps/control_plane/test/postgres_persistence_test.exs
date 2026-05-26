@@ -2,10 +2,12 @@ defmodule TelemetryFabricControl.PostgresPersistenceTest do
   use ExUnit.Case
 
   alias TelemetryFabricControl.AgentRegistry
+  alias TelemetryFabricControl.ControlCommand
   alias TelemetryFabricControl.ControlService
   alias TelemetryFabricControl.ControlStateSnapshot
   alias TelemetryFabricControl.PipelineStore
   alias TelemetryFabricControl.PostgresCodec
+  alias TelemetryFabricControl.PostgresControlStore
   alias TelemetryFabricControl.PostgresMigrator
   alias TelemetryFabricControl.PostgresSchema
   alias TelemetryFabricControl.PostgresSync
@@ -14,11 +16,99 @@ defmodule TelemetryFabricControl.PostgresPersistenceTest do
   alias TelemetryFabricControl.Schema.Agent
   alias TelemetryFabricControl.Schema.AgentCommand
   alias TelemetryFabricControl.Schema.AuditEvent
+  alias TelemetryFabricControl.Schema.BlockchainAddressWatch
+  alias TelemetryFabricControl.Schema.BlockchainChain
+  alias TelemetryFabricControl.Schema.BlockchainCheckpoint
+  alias TelemetryFabricControl.Schema.BlockchainContractWatch
+  alias TelemetryFabricControl.Schema.BlockchainCrawlAssignment
+  alias TelemetryFabricControl.Schema.BlockchainFilterRule
+  alias TelemetryFabricControl.Schema.BlockchainRpcEndpoint
+  alias TelemetryFabricControl.Schema.BlockchainTokenWatch
+  alias TelemetryFabricControl.Schema.ModuleConfigVersion
+  alias TelemetryFabricControl.Schema.ModuleRegistration
   alias TelemetryFabricControl.Schema.PipelineVersion
   alias TelemetryFabricControl.Schema.Tenant
 
   defmodule FakeRepo do
     def transaction(%Ecto.Multi{} = multi), do: {:ok, Ecto.Multi.to_list(multi)}
+  end
+
+  defmodule CommandRepo do
+    @rows_key {__MODULE__, :rows}
+    @one_key {__MODULE__, :one}
+    @updates_key {__MODULE__, :updates}
+    @audits_key {__MODULE__, :audits}
+    @all_fragments_key {__MODULE__, :all_fragments}
+    @one_fragments_key {__MODULE__, :one_fragments}
+
+    def reset! do
+      Enum.each(
+        [@rows_key, @one_key, @updates_key, @audits_key, @all_fragments_key, @one_fragments_key],
+        &Process.delete/1
+      )
+    end
+
+    def put_all(rows, fragments \\ []) do
+      Process.put(@rows_key, rows)
+      Process.put(@all_fragments_key, fragments)
+    end
+
+    def put_one(row, fragments \\ []) do
+      Process.put(@one_key, row)
+      Process.put(@one_fragments_key, fragments)
+    end
+
+    def updates do
+      @updates_key
+      |> Process.get([])
+      |> Enum.reverse()
+    end
+
+    def audits do
+      @audits_key
+      |> Process.get([])
+      |> Enum.reverse()
+    end
+
+    def transaction(fun) when is_function(fun, 0) do
+      try do
+        {:ok, fun.()}
+      catch
+        {:rollback, reason} -> {:error, reason}
+      end
+    end
+
+    def all(query) do
+      assert_query_fragments!(query, Process.get(@all_fragments_key, []))
+      Process.get(@rows_key, [])
+    end
+
+    def one(query) do
+      assert_query_fragments!(query, Process.get(@one_fragments_key, []))
+      Process.get(@one_key)
+    end
+
+    def update_all(_query, opts) do
+      Process.put(@updates_key, [opts | Process.get(@updates_key, [])])
+      {1, nil}
+    end
+
+    def insert_all(TelemetryFabricControl.Schema.AuditEvent, [row], _opts) do
+      Process.put(@audits_key, [row | Process.get(@audits_key, [])])
+      {1, nil}
+    end
+
+    def rollback(reason), do: throw({:rollback, reason})
+
+    defp assert_query_fragments!(query, fragments) do
+      query_text = inspect(query)
+
+      Enum.each(fragments, fn fragment ->
+        unless query_text =~ fragment do
+          raise "expected query to contain #{inspect(fragment)}"
+        end
+      end)
+    end
   end
 
   setup do
@@ -37,9 +127,22 @@ defmodule TelemetryFabricControl.PostgresPersistenceTest do
     assert sql =~ "CREATE TABLE IF NOT EXISTS pipeline_versions"
     assert sql =~ "CREATE TABLE IF NOT EXISTS agent_commands"
     assert sql =~ "CREATE TABLE IF NOT EXISTS audit_events"
+    assert sql =~ "CREATE TABLE IF NOT EXISTS module_registry"
+    assert sql =~ "CREATE TABLE IF NOT EXISTS module_config_versions"
+    assert sql =~ "CREATE TABLE IF NOT EXISTS blockchain_chains"
+    assert sql =~ "CREATE TABLE IF NOT EXISTS blockchain_rpc_endpoints"
+    assert sql =~ "CREATE TABLE IF NOT EXISTS blockchain_address_watchlist"
+    assert sql =~ "CREATE TABLE IF NOT EXISTS blockchain_contract_watchlist"
+    assert sql =~ "CREATE TABLE IF NOT EXISTS blockchain_token_watchlist"
+    assert sql =~ "CREATE TABLE IF NOT EXISTS blockchain_filter_rules"
+    assert sql =~ "CREATE TABLE IF NOT EXISTS blockchain_crawl_assignments"
+    assert sql =~ "CREATE TABLE IF NOT EXISTS blockchain_checkpoints"
     assert sql =~ "audit_events_event_id_idx"
     assert sql =~ "agent_commands_pending_idx"
+    assert sql =~ "agent_commands_delivered_lease_idx"
     assert sql =~ "pipeline_versions_latest_idx"
+    assert sql =~ "module_config_versions_latest_idx"
+    assert sql =~ "blockchain_rpc_endpoints_chain_idx"
   end
 
   test "postgres migration SQL splits into executable statements" do
@@ -164,6 +267,71 @@ defmodule TelemetryFabricControl.PostgresPersistenceTest do
     assert Enum.any?(rows.audit_events, &(&1.action == "command.failed"))
   end
 
+  test "postgres control store redelivers commands whose delivered lease expired" do
+    CommandRepo.reset!()
+
+    delivered_at = DateTime.add(DateTime.utc_now(), -120, :second)
+
+    row = %AgentCommand{
+      command_id: "cmd-lease",
+      agent_id: "agent-1",
+      tenant_id: "payments-prod",
+      kind: "pause_exports",
+      reason: "maintenance",
+      status: "delivered",
+      inserted_at: delivered_at,
+      delivered_at: delivered_at
+    }
+
+    CommandRepo.put_all([row], ["pending", "delivered", "delivered_at"])
+
+    assert {:ok, [%ControlCommand{command_id: "cmd-lease", status: :delivered} = redelivered]} =
+             PostgresControlStore.drain_commands("agent-1", CommandRepo)
+
+    assert DateTime.compare(redelivered.delivered_at, delivered_at) == :gt
+
+    assert [[set: [status: "delivered", delivered_at: %DateTime{}]]] = CommandRepo.updates()
+    assert [%{action: "command.delivered", resource: "cmd-lease"}] = CommandRepo.audits()
+  end
+
+  test "postgres control store treats repeated ACKs as idempotent" do
+    CommandRepo.reset!()
+
+    delivered_at = DateTime.add(DateTime.utc_now(), -120, :second)
+    acknowledged_at = DateTime.add(DateTime.utc_now(), -60, :second)
+
+    row = %AgentCommand{
+      command_id: "cmd-ack",
+      agent_id: "agent-1",
+      tenant_id: "payments-prod",
+      kind: "pause_exports",
+      reason: "maintenance",
+      status: "succeeded",
+      inserted_at: delivered_at,
+      delivered_at: delivered_at,
+      acknowledged_at: acknowledged_at
+    }
+
+    CommandRepo.put_one(row, ["agent_id", "command_id"])
+
+    assert {:ok,
+            %ControlCommand{
+              command_id: "cmd-ack",
+              status: :succeeded,
+              acknowledged_at: ^acknowledged_at
+            }} =
+             PostgresControlStore.ack_command(
+               "agent-1",
+               "cmd-ack",
+               false,
+               "changed on retry",
+               CommandRepo
+             )
+
+    assert CommandRepo.updates() == []
+    assert CommandRepo.audits() == []
+  end
+
   test "rolled back pipeline versions convert to postgres row maps" do
     first_config = SamplePipeline.build("payments-prod")
     second_config = %{first_config | processors: [%{name: "redact", enabled: true}]}
@@ -270,6 +438,89 @@ defmodule TelemetryFabricControl.PostgresPersistenceTest do
              action: "pipeline.updated",
              resource: "payments-prod/default",
              inserted_at: now
+           }).valid?
+
+    assert ModuleRegistration.changeset(%{
+             module_name: "blockchain",
+             display_name: "Blockchain",
+             owner: "data-platform",
+             enabled: true
+           }).valid?
+
+    assert ModuleConfigVersion.changeset(%{
+             tenant_id: "payments-prod",
+             module_name: "blockchain",
+             version: 1,
+             config: %{"chains" => []},
+             checksum: String.duplicate("b", 64),
+             updated_by: "operator"
+           }).valid?
+
+    assert BlockchainChain.changeset(%{
+             tenant_id: "payments-prod",
+             chain_key: "ethereum-mainnet",
+             display_name: "Ethereum Mainnet",
+             network: "mainnet",
+             enabled: true
+           }).valid?
+
+    assert BlockchainRpcEndpoint.changeset(%{
+             tenant_id: "payments-prod",
+             endpoint_id: "eth-mainnet-primary",
+             chain_key: "ethereum-mainnet",
+             url: "https://rpc.example.invalid",
+             priority: 10,
+             enabled: true
+           }).valid?
+
+    assert BlockchainAddressWatch.changeset(%{
+             tenant_id: "payments-prod",
+             entry_id: "treasury",
+             chain_key: "ethereum-mainnet",
+             address: "0x0000000000000000000000000000000000000000",
+             enabled: true
+           }).valid?
+
+    assert BlockchainContractWatch.changeset(%{
+             tenant_id: "payments-prod",
+             contract_id: "usdc",
+             chain_key: "ethereum-mainnet",
+             address: "0x0000000000000000000000000000000000000000",
+             enabled: true
+           }).valid?
+
+    assert BlockchainTokenWatch.changeset(%{
+             tenant_id: "payments-prod",
+             token_id: "usdc",
+             chain_key: "ethereum-mainnet",
+             contract_address: "0x0000000000000000000000000000000000000000",
+             decimals: 6,
+             enabled: true
+           }).valid?
+
+    assert BlockchainFilterRule.changeset(%{
+             tenant_id: "payments-prod",
+             rule_id: "large-transfers",
+             name: "Large transfers",
+             expression: %{"field" => "amount", "op" => "gte", "value" => "1000000"},
+             action: "keep",
+             enabled: true
+           }).valid?
+
+    assert BlockchainCrawlAssignment.changeset(%{
+             tenant_id: "payments-prod",
+             assignment_id: "crawler-a-eth",
+             chain_key: "ethereum-mainnet",
+             crawler_id: "crawler-a",
+             enabled: true
+           }).valid?
+
+    assert BlockchainCheckpoint.changeset(%{
+             tenant_id: "payments-prod",
+             assignment_id: "crawler-a-eth",
+             chain_key: "ethereum-mainnet",
+             cursor: %{"block" => 100},
+             updated_by: "crawler-a"
            }).valid?
 
     refute AgentCommand.changeset(%{

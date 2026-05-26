@@ -1,0 +1,53 @@
+syntax = "proto3";
+
+package telemetry.fabric.blockchain.v1;
+
+import "google/protobuf/timestamp.proto";
+import "platform/priority.proto";
+
+enum RuleActionType {
+  RULE_ACTION_TYPE_UNSPECIFIED = 0;
+  RULE_ACTION_TYPE_ACCEPT = 1;
+  RULE_ACTION_TYPE_DROP = 2;
+  RULE_ACTION_TYPE_ROUTE = 3;
+  RULE_ACTION_TYPE_ALERT = 4;
+  RULE_ACTION_TYPE_AGGREGATE = 5;
+}
+
+message RuleAction {
+  RuleActionType type = 1;
+  .telemetry.fabric.platform.v1.Priority priority = 2;
+  string route = 3;
+  string discard_reason = 4;
+  repeated string alert_channels = 5;
+  map<string, string> attributes = 6;
+}
+
+message FilterRule {
+  string rule_id = 1;
+  string tenant_id = 2;
+  string name = 3;
+  string description = 4;
+  bool enabled = 5;
+  uint32 version = 6;
+  string chain = 7;
+  string network = 8;
+  repeated string event_types = 9;
+  repeated string contract_addresses = 10;
+  repeated string from_addresses = 11;
+  repeated string to_addresses = 12;
+  repeated string token_addresses = 13;
+  string min_amount_decimal = 14;
+  string max_amount_decimal = 15;
+  map<string, string> attributes = 16;
+  RuleAction action = 17;
+}
+
+message RuleMatch {
+  string rule_id = 1;
+  uint32 rule_version = 2;
+  string rule_name = 3;
+  RuleAction action = 4;
+  google.protobuf.Timestamp matched_at = 5;
+  map<string, string> captures = 6;
+}

@@ -250,6 +250,7 @@ fn parse_exporter_protocol(value: &str) -> Result<ExporterProtocol, DynError> {
         "prometheus-remote-write" => Ok(ExporterProtocol::PrometheusRemoteWrite),
         "kafka" => Ok(ExporterProtocol::Kafka),
         "s3" => Ok(ExporterProtocol::S3),
+        "clickhouse" => Ok(ExporterProtocol::ClickHouse),
         "stdout" => Ok(ExporterProtocol::Stdout),
         "file" => Ok(ExporterProtocol::File),
         _ => Err(format!("unknown exporter protocol: {value}").into()),
@@ -377,6 +378,29 @@ routes:
                 .map(|err| err.to_string().contains("unknown receiver protocol"))
                 .unwrap_or(false)
         );
+        Ok(())
+    }
+
+    #[test]
+    fn parses_clickhouse_exporter_protocol() -> Result<(), DynError> {
+        let raw = r#"
+tenant: analytics-prod
+receivers:
+  tf-line:
+    protocol: tf_line
+    endpoint: 127.0.0.1:4319
+exporters:
+  clickhouse-events:
+    protocol: clickhouse
+    endpoint: clickhouse://localhost:9000/events
+routes:
+  logs:
+    exporters: [clickhouse-events]
+"#;
+
+        let config = parse_pipeline_config(raw)?;
+
+        assert_eq!(config.exporters[0].protocol, ExporterProtocol::ClickHouse);
         Ok(())
     }
 }

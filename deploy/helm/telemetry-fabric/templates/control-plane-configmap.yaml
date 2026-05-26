@@ -1,0 +1,10 @@
+{{- if and .Values.controlPlane.enabled .Values.controlPlane.config.create }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ default (printf "%s-config" (include "telemetry-fabric.controlPlaneName" .)) .Values.controlPlane.config.name }}
+  labels:
+    {{- include "telemetry-fabric.controlPlaneLabels" . | nindent 4 }}
+data:
+  {{- toYaml .Values.controlPlane.config.data | nindent 2 }}
+{{- end }}
