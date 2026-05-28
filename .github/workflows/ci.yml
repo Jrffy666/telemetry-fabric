@@ -63,7 +63,7 @@ jobs:
       - run: docker build -f deploy/docker/control-plane.Dockerfile -t telemetry-fabric/control-plane:ci .
       - run: bash scripts/ci_smoke_compose.sh
         timeout-minutes: 8
-      - uses: azure/setup-helm@v4
+      - uses: azure/setup-helm@v5
       - run: helm lint deploy/helm/telemetry-fabric
       - run: helm lint deploy/helm/telemetry-fabric -f deploy/helm/telemetry-fabric/values-production.example.yaml
       - run: helm template telemetry-fabric deploy/helm/telemetry-fabric --set controlPlane.enabled=true
