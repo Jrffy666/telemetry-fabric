@@ -1,0 +1,54 @@
+{{- if .Values.prometheusRule.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ include "telemetry-fabric.name" . }}
+  {{- if .Values.prometheusRule.namespace }}
+  namespace: {{ .Values.prometheusRule.namespace | quote }}
+  {{- end }}
+  labels:
+    {{- include "telemetry-fabric.labels" . | nindent 4 }}
+    {{- with .Values.prometheusRule.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  groups:
+    - name: telemetry-fabric.agent
+      rules:
+        - alert: TelemetryFabricAgentQueueBytesHigh
+          expr: max by (job, instance) (telemetry_agent_queue_bytes) > {{ .Values.prometheusRule.agent.queueBytesHigh.threshold }}
+          for: {{ .Values.prometheusRule.agent.queueBytesHigh.for | quote }}
+          labels:
+            severity: warning
+          annotations:
+            summary: Telemetry Fabric agent queue bytes are high
+            description: Agent queue bytes have exceeded {{ .Values.prometheusRule.agent.queueBytesHigh.threshold }}.
+        - alert: TelemetryFabricAgentFlushFailuresIncreasing
+          expr: increase(telemetry_agent_flush_failures_total[{{ .Values.prometheusRule.agent.flushFailures.window }}]) > {{ .Values.prometheusRule.agent.flushFailures.threshold }}
+          for: {{ .Values.prometheusRule.agent.flushFailures.for | quote }}
+          labels:
+            severity: warning
+          annotations:
+            summary: Telemetry Fabric agent flush failures are increasing
+            description: Agent flush failures increased over {{ .Values.prometheusRule.agent.flushFailures.window }}.
+        - alert: TelemetryFabricAgentControlHeartbeatFailuresIncreasing
+          expr: increase(telemetry_agent_control_heartbeat_failures_total[{{ .Values.prometheusRule.agent.controlHeartbeatFailures.window }}]) > {{ .Values.prometheusRule.agent.controlHeartbeatFailures.threshold }}
+          for: {{ .Values.prometheusRule.agent.controlHeartbeatFailures.for | quote }}
+          labels:
+            severity: warning
+          annotations:
+            summary: Telemetry Fabric agent control heartbeat failures are increasing
+            description: Agent control heartbeat failures increased over {{ .Values.prometheusRule.agent.controlHeartbeatFailures.window }}.
+    {{- if .Values.controlPlane.enabled }}
+    - name: telemetry-fabric.control-plane
+      rules:
+        - alert: TelemetryFabricControlPlaneHttp5xxIncreasing
+          expr: sum by (method, path) (increase(telemetry_fabric_control_http_requests_total{status=~"5.."}[{{ .Values.prometheusRule.controlPlane.http5xx.window }}])) > {{ .Values.prometheusRule.controlPlane.http5xx.threshold }}
+          for: {{ .Values.prometheusRule.controlPlane.http5xx.for | quote }}
+          labels:
+            severity: warning
+          annotations:
+            summary: Telemetry Fabric control-plane HTTP 5xx responses are increasing
+            description: Control-plane HTTP 5xx responses increased over {{ .Values.prometheusRule.controlPlane.http5xx.window }}.
+    {{- end }}
+{{- end }}

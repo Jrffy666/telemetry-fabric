@@ -59,6 +59,35 @@ defmodule TelemetryFabricControl.ControlServiceTest do
              })
   end
 
+  test "signs config updates when a signing key is configured" do
+    with_env("TELEMETRY_FABRIC_CONTROL_CONFIG_SIGNING_KEY", "test-signing-key")
+
+    "payments-prod"
+    |> SamplePipeline.build()
+    |> PipelineStore.put_pipeline("test")
+
+    ControlService.register_agent(%{
+      agent_id: "agent-1",
+      tenant_id: "payments-prod",
+      hostname: "node-a",
+      version: "0.1.0"
+    })
+
+    assert {:ok, %ConfigUpdate{pipeline_config: payload, signature: signature}} =
+             ControlService.config_update(%{
+               agent_id: "agent-1",
+               tenant_id: "payments-prod",
+               current_version: 0
+             })
+
+    expected_signature =
+      "hmac-sha256=" <>
+        (:crypto.mac(:hmac, :sha256, "test-signing-key", payload)
+         |> Base.encode16(case: :lower))
+
+    assert signature == expected_signature
+  end
+
   test "heartbeat returns reload commands when the agent config is stale" do
     "payments-prod"
     |> SamplePipeline.build()
@@ -157,7 +186,7 @@ defmodule TelemetryFabricControl.ControlServiceTest do
       pipeline: "default",
       actor: "operator",
       receivers: [
-        %{"name" => "tf-line", "protocol" => "tf_line", "endpoint" => "127.0.0.1:4319"}
+        %{"name" => "otlp-grpc", "protocol" => "otlp_grpc", "endpoint" => "0.0.0.0:4317"}
       ],
       processors: [
         %{"name" => "memory-limiter", "enabled" => true},
@@ -413,5 +442,21 @@ defmodule TelemetryFabricControl.ControlServiceTest do
     File.mkdir_p!(path)
     on_exit(fn -> File.rm_rf!(path) end)
     path
+  end
+
+  defp with_env(name, value) do
+    previous = System.get_env(name)
+
+    on_exit(fn ->
+      case previous do
+        nil -> System.delete_env(name)
+        previous -> System.put_env(name, previous)
+      end
+    end)
+
+    case value do
+      nil -> System.delete_env(name)
+      value -> System.put_env(name, value)
+    end
   end
 end

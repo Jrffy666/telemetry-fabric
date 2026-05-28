@@ -13,35 +13,28 @@ The control plane owns slow-changing operational state:
 - RBAC and audit logs.
 - Live topology and fleet health.
 
-The MVP still uses pure OTP processes so it can be bootstrapped without an
-external database. The production target is Phoenix, PostgreSQL-backed Ecto
-repositories, and a gRPC config-stream endpoint.
+The control plane can run with dependency-free OTP stores for local operation
+or with PostgreSQL as the source of truth for multi-replica deployments.
 
 The current OTP control domain includes:
 
-- File-backed MVP persistence for agent registry, pipeline versions, command
+- File-backed persistence for agent registry, pipeline versions, command
   queue, and audit events.
 - PostgreSQL schema, row codecs, Ecto schemas, Repo wiring, migration task,
   periodic `Ecto.Multi` snapshot sync, and an opt-in PostgreSQL-primary store
   for tenants, agents, pipeline versions, pending and delivered commands, and
   audit events.
-- A protocol-neutral `ControlService` that mirrors the AgentControl protobuf
-  workflow: agent registration, heartbeat handling, config update generation,
-  status reporting, pipeline publication and rollback, and queued operator
-  commands.
+- A protocol-neutral `ControlService` for agent registration, heartbeat
+  handling, config update generation, status reporting, pipeline publication
+  and rollback, and queued operator commands.
 - Audit events for agent registration, pipeline updates, pipeline rollback,
   command enqueue, and command delivery.
-- YAML pipeline payload generation with a SHA-256 checksum so a future transport
-  adapter can return `ConfigUpdate` messages without changing the domain API.
-- A dependency-free MVP HTTP adapter for local integration and smoke testing,
+- YAML pipeline payload generation with a SHA-256 checksum for config update
+  validation.
+- A dependency-free HTTP adapter for local integration and smoke testing,
   with optional bearer-token authorization, TLS/mTLS, request ID propagation,
   structured access logs, Prometheus request metrics, and dependency-aware
   readiness checks.
-
-The production Phoenix API and gRPC transport layer are still future adapters
-and should be built on top of `ControlService` and the PostgreSQL store
-boundary. CI now runs the live PostgreSQL persistence test against a disposable
-database.
 
 ## Data Plane
 
@@ -56,11 +49,10 @@ The data plane owns hot-path telemetry work:
 
 The first Rust implementation includes core data models, routing validation, a
 segmented disk queue, record processors for memory limiting, redaction, and
-tenant rate limiting, exporter traits, a minimal TCP line
-receiver, OTLP/gRPC plus OTLP/HTTP protobuf/JSON trace/metrics/logs paths, and
+tenant rate limiting, exporter traits, OTLP/gRPC plus OTLP/HTTP protobuf/JSON
+trace/metrics/logs paths, and
 a Prometheus Remote Write metrics exporter. Metrics support gauge, sum,
-histogram, exponential histogram, and summary datapoints in this slice. Kafka
-and S3 are future protocol adapters.
+histogram, exponential histogram, and summary datapoints in this slice.
 
 ## Runtime Topology
 
@@ -82,5 +74,5 @@ Elixir control plane
   config.
 - If a config rollout fails validation, agents reject it and continue on the
   previous version.
-- If a segment is corrupt, the data plane must quarantine it and continue with
-  later healthy segments in a future hardening phase.
+- If a segment is corrupt, the data plane quarantines it and continues with
+  later healthy segments.

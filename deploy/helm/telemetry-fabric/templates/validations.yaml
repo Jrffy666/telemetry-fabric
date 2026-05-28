@@ -1,5 +1,42 @@
-{{- if .Values.controlPlane.enabled -}}
 {{- $storage := default "otp" .Values.controlPlane.storage -}}
+{{- $agentImageTag := default "" .Values.image.tag | toString -}}
+{{- $controlPlaneImageTag := default "" .Values.controlPlane.image.tag | toString -}}
+{{- if .Values.productionMode -}}
+{{- if not .Values.controlPlane.enabled -}}
+{{- fail "productionMode=true requires controlPlane.enabled=true" -}}
+{{- end -}}
+{{- if ne $storage "postgres" -}}
+{{- fail "productionMode=true requires controlPlane.storage=postgres" -}}
+{{- end -}}
+{{- if not .Values.controlPlane.databaseUrlSecret.name -}}
+{{- fail "productionMode=true requires controlPlane.databaseUrlSecret.name" -}}
+{{- end -}}
+{{- if not .Values.agent.controlAuthTokenSecret.name -}}
+{{- fail "productionMode=true requires agent.controlAuthTokenSecret.name" -}}
+{{- end -}}
+{{- if not .Values.controlPlane.auth.agentTokenSecret.name -}}
+{{- fail "productionMode=true requires controlPlane.auth.agentTokenSecret.name" -}}
+{{- end -}}
+{{- if not .Values.controlPlane.auth.operatorTokenSecret.name -}}
+{{- fail "productionMode=true requires controlPlane.auth.operatorTokenSecret.name" -}}
+{{- end -}}
+{{- if not .Values.controlPlane.tls.enabled -}}
+{{- fail "productionMode=true requires controlPlane.tls.enabled=true" -}}
+{{- end -}}
+{{- if not .Values.controlPlane.tls.secretName -}}
+{{- fail "productionMode=true requires controlPlane.tls.secretName" -}}
+{{- end -}}
+{{- if not .Values.networkPolicy.enabled -}}
+{{- fail "productionMode=true requires networkPolicy.enabled=true" -}}
+{{- end -}}
+{{- if or (eq $agentImageTag "") (eq (lower $agentImageTag) "latest") -}}
+{{- fail "productionMode=true requires image.tag to be non-empty and not latest" -}}
+{{- end -}}
+{{- if or (eq $controlPlaneImageTag "") (eq (lower $controlPlaneImageTag) "latest") -}}
+{{- fail "productionMode=true requires controlPlane.image.tag to be non-empty and not latest" -}}
+{{- end -}}
+{{- end -}}
+{{- if .Values.controlPlane.enabled -}}
 {{- if not (has $storage (list "otp" "postgres")) -}}
 {{- fail "controlPlane.storage must be one of: otp, postgres" -}}
 {{- end -}}

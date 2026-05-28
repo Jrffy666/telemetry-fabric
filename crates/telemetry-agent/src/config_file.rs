@@ -224,9 +224,6 @@ fn parse_receiver_protocol(value: &str) -> Result<ReceiverProtocol, DynError> {
     match normalize_token(value).as_str() {
         "otlp-grpc" => Ok(ReceiverProtocol::OtlpGrpc),
         "otlp-http" => Ok(ReceiverProtocol::OtlpHttp),
-        "prometheus-remote-write" => Ok(ReceiverProtocol::PrometheusRemoteWrite),
-        "file-log" => Ok(ReceiverProtocol::FileLog),
-        "tf-line" => Ok(ReceiverProtocol::TfLine),
         _ => Err(format!("unknown receiver protocol: {value}").into()),
     }
 }
@@ -236,7 +233,6 @@ fn parse_processor_kind(value: &str) -> Result<ProcessorKind, DynError> {
         "memory-limiter" => Ok(ProcessorKind::MemoryLimiter),
         "batch" => Ok(ProcessorKind::Batch),
         "redact" => Ok(ProcessorKind::Redact),
-        "tail-sampling" => Ok(ProcessorKind::TailSampling),
         "tenant-rate-limit" => Ok(ProcessorKind::TenantRateLimit),
         _ => Err(format!("unknown processor kind: {value}").into()),
     }
@@ -248,9 +244,6 @@ fn parse_exporter_protocol(value: &str) -> Result<ExporterProtocol, DynError> {
         "otlp-http" => Ok(ExporterProtocol::OtlpHttp),
         "otlp-http-json" => Ok(ExporterProtocol::OtlpHttpJson),
         "prometheus-remote-write" => Ok(ExporterProtocol::PrometheusRemoteWrite),
-        "kafka" => Ok(ExporterProtocol::Kafka),
-        "s3" => Ok(ExporterProtocol::S3),
-        "clickhouse" => Ok(ExporterProtocol::ClickHouse),
         "stdout" => Ok(ExporterProtocol::Stdout),
         "file" => Ok(ExporterProtocol::File),
         _ => Err(format!("unknown exporter protocol: {value}").into()),
@@ -276,9 +269,6 @@ mod tests {
 tenant: payments-prod
 pipeline: default
 receivers:
-  tf-line:
-    protocol: tf_line
-    endpoint: 127.0.0.1:4319
   otlp-http:
     protocol: otlp_http
     endpoint: 0.0.0.0:4318
@@ -320,12 +310,6 @@ limits:
         let config = file_config.into_pipeline_config()?;
 
         assert_eq!(config.tenant_id, "payments-prod");
-        assert!(
-            config
-                .receivers
-                .iter()
-                .any(|receiver| receiver.protocol == ReceiverProtocol::TfLine)
-        );
         let otlp_http = config
             .receivers
             .iter()
@@ -359,7 +343,7 @@ tenant: payments-prod
 receivers:
   custom:
     protocol: not_real
-    endpoint: 127.0.0.1:4319
+    endpoint: 127.0.0.1:4317
 exporters:
   stdout:
     protocol: stdout
@@ -378,29 +362,6 @@ routes:
                 .map(|err| err.to_string().contains("unknown receiver protocol"))
                 .unwrap_or(false)
         );
-        Ok(())
-    }
-
-    #[test]
-    fn parses_clickhouse_exporter_protocol() -> Result<(), DynError> {
-        let raw = r#"
-tenant: analytics-prod
-receivers:
-  tf-line:
-    protocol: tf_line
-    endpoint: 127.0.0.1:4319
-exporters:
-  clickhouse-events:
-    protocol: clickhouse
-    endpoint: clickhouse://localhost:9000/events
-routes:
-  logs:
-    exporters: [clickhouse-events]
-"#;
-
-        let config = parse_pipeline_config(raw)?;
-
-        assert_eq!(config.exporters[0].protocol, ExporterProtocol::ClickHouse);
         Ok(())
     }
 }

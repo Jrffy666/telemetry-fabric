@@ -88,6 +88,7 @@ pub struct DiskQueue {
     options: DiskQueueOptions,
     active_segment_id: u64,
     active_segment_bytes: u64,
+    queued_bytes: u64,
     cursor: Cursor,
 }
 
@@ -103,6 +104,7 @@ impl DiskQueue {
             File::create(&active_path)?;
         }
         let active_segment_bytes = fs::metadata(&active_path)?.len();
+        let queued_bytes = total_segment_bytes(&dir, &segments)?;
 
         let cursor = read_cursor(&dir)?.unwrap_or_else(|| Cursor {
             segment_id: segments.iter().copied().min().unwrap_or(active_segment_id),
@@ -115,6 +117,7 @@ impl DiskQueue {
             options,
             active_segment_id,
             active_segment_bytes,
+            queued_bytes,
             cursor,
         })
     }
@@ -140,6 +143,7 @@ impl DiskQueue {
             file.sync_data()?;
         }
         self.active_segment_bytes += record_len;
+        self.queued_bytes += record_len;
         Ok(())
     }
 
@@ -224,11 +228,7 @@ impl DiskQueue {
     }
 
     pub fn queued_bytes(&self) -> Result<u64, DiskQueueError> {
-        let mut total = 0;
-        for id in segment_ids(&self.dir)? {
-            total += fs::metadata(segment_path(&self.dir, id))?.len();
-        }
-        Ok(total)
+        Ok(self.queued_bytes)
     }
 
     pub fn cursor_position(&self) -> (u64, u64) {
@@ -330,14 +330,16 @@ impl DiskQueue {
             .map_or(ReadStep::Empty, ReadStep::Move))
     }
 
-    fn quarantine_segment(&self, segment_id: u64, reason: &str) -> Result<(), DiskQueueError> {
+    fn quarantine_segment(&mut self, segment_id: u64, reason: &str) -> Result<(), DiskQueueError> {
         let source = segment_path(&self.dir, segment_id);
         if !source.exists() {
             return Ok(());
         }
+        let source_bytes = fs::metadata(&source)?.len();
 
         let destination = corrupt_segment_path(&source)?;
         fs::rename(&source, &destination)?;
+        self.queued_bytes = self.queued_bytes.saturating_sub(source_bytes);
         fs::write(quarantine_reason_path(&destination), format!("{reason}\n"))?;
         Ok(())
     }
@@ -349,14 +351,16 @@ impl DiskQueue {
         Ok(())
     }
 
-    fn remove_segments_before(&self, segment_id: u64) -> Result<(), DiskQueueError> {
+    fn remove_segments_before(&mut self, segment_id: u64) -> Result<(), DiskQueueError> {
         for id in segment_ids(&self.dir)?
             .into_iter()
             .filter(|id| *id < segment_id)
         {
             let path = segment_path(&self.dir, id);
             if path.exists() {
+                let removed_bytes = fs::metadata(&path)?.len();
                 fs::remove_file(path)?;
+                self.queued_bytes = self.queued_bytes.saturating_sub(removed_bytes);
             }
         }
         Ok(())
@@ -394,6 +398,14 @@ fn segment_ids(dir: &Path) -> Result<Vec<u64>, DiskQueueError> {
     }
     ids.sort_unstable();
     Ok(ids)
+}
+
+fn total_segment_bytes(dir: &Path, segments: &[u64]) -> Result<u64, DiskQueueError> {
+    let mut total = 0_u64;
+    for id in segments {
+        total += fs::metadata(segment_path(dir, *id))?.len();
+    }
+    Ok(total)
 }
 
 fn segment_path(dir: &Path, id: u64) -> PathBuf {
@@ -541,6 +553,56 @@ mod tests {
     }
 
     #[test]
+    fn queued_bytes_grows_after_enqueue_and_reopens_from_segments() -> Result<(), DiskQueueError> {
+        let dir = test_dir("queued-bytes-enqueue");
+        let mut queue = DiskQueue::open(&dir, DiskQueueOptions::default())?;
+
+        assert_eq!(queue.queued_bytes()?, 0);
+
+        queue.enqueue(b"one")?;
+        let expected_after_one = storage_bytes_for_payload(3)?;
+        assert_eq!(queue.queued_bytes()?, expected_after_one);
+
+        queue.enqueue(b"two")?;
+        let expected_after_two = expected_after_one + storage_bytes_for_payload(3)?;
+        assert_eq!(queue.queued_bytes()?, expected_after_two);
+
+        drop(queue);
+        let reopened = DiskQueue::open(&dir, DiskQueueOptions::default())?;
+        assert_eq!(reopened.queued_bytes()?, expected_after_two);
+
+        cleanup(dir);
+        Ok(())
+    }
+
+    #[test]
+    fn queued_bytes_updates_when_commit_removes_segment() -> Result<(), DiskQueueError> {
+        let dir = test_dir("queued-bytes-commit");
+        let mut queue = DiskQueue::open(
+            &dir,
+            DiskQueueOptions {
+                max_segment_bytes: 16,
+                fsync_on_write: false,
+            },
+        )?;
+
+        queue.enqueue(b"one")?;
+        queue.enqueue(b"two")?;
+
+        let segment_bytes = storage_bytes_for_payload(3)?;
+        assert_eq!(queue.queued_bytes()?, segment_bytes * 2);
+
+        assert_eq!(queue.drain(1, |_payload| Ok(()))?, 1);
+        assert_eq!(queue.queued_bytes()?, segment_bytes * 2);
+
+        assert_eq!(queue.drain(1, |_payload| Ok(()))?, 1);
+        assert_eq!(queue.queued_bytes()?, segment_bytes);
+
+        cleanup(dir);
+        Ok(())
+    }
+
+    #[test]
     fn corrupt_segment_is_quarantined_and_later_segment_is_read() -> Result<(), DiskQueueError> {
         let dir = test_dir("corrupt-segment");
         let mut queue = DiskQueue::open(
@@ -553,6 +615,8 @@ mod tests {
 
         queue.enqueue(b"one")?;
         queue.enqueue(b"two")?;
+        let segment_bytes = storage_bytes_for_payload(3)?;
+        assert_eq!(queue.queued_bytes()?, segment_bytes * 2);
 
         let first_segment = segment_path(&dir, 1);
         let mut file = OpenOptions::new().write(true).open(&first_segment)?;
@@ -570,6 +634,7 @@ mod tests {
         assert_eq!(drained, vec![b"two".to_vec()]);
         assert!(!first_segment.exists());
         assert!(PathBuf::from(format!("{}{}", first_segment.display(), CORRUPT_SUFFIX)).exists());
+        assert_eq!(queue.queued_bytes()?, segment_bytes);
         cleanup(dir);
         Ok(())
     }

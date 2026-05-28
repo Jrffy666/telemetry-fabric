@@ -1,8 +1,6 @@
 defmodule TelemetryFabricControl.AuditLog do
   @moduledoc """
-  Append-only in-memory audit log used by the MVP control plane.
-
-  Production storage should move this behind PostgreSQL with immutable rows.
+  Append-only audit log used by the file-backed control plane.
   """
 
   use GenServer

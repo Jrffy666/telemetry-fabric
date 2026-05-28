@@ -3,6 +3,8 @@ image:
   tag: "0.1.0"
   pullPolicy: IfNotPresent
 
+productionMode: false
+
 imagePullSecrets: []
 
 agent:
@@ -199,6 +201,28 @@ serviceMonitor:
   interval: 30s
   labels: {}
 
+prometheusRule:
+  enabled: false
+  namespace: ""
+  labels: {}
+  agent:
+    queueBytesHigh:
+      threshold: "1073741824"
+      for: 10m
+    flushFailures:
+      window: 5m
+      threshold: 0
+      for: 5m
+    controlHeartbeatFailures:
+      window: 5m
+      threshold: 0
+      for: 5m
+  controlPlane:
+    http5xx:
+      window: 5m
+      threshold: 0
+      for: 5m
+
 resources:
   requests:
     cpu: 100m
@@ -206,249 +230,6 @@ resources:
   limits:
     cpu: 500m
     memory: 512Mi
-
-crawler:
-  enabled: false
-  image:
-    repository: telemetry-fabric/chain-crawler-go
-    tag: "0.1.0"
-    pullPolicy: IfNotPresent
-  replicas: 2
-  command: []
-  args: []
-  env:
-    - name: TELEMETRY_FABRIC_CHAIN_NAME
-      value: ethereum
-    - name: TELEMETRY_FABRIC_CHAIN_NETWORK
-      value: mainnet
-  extraEnvFrom: []
-  secrets:
-    create: false
-    name: ""
-    stringData: {}
-  configMap:
-    create: true
-    name: ""
-    mountPath: /etc/telemetry-fabric/crawler
-    data:
-      crawler.yaml: |
-        chain: ethereum
-        network: mainnet
-        finality_depth: 64
-        max_block_range: 1000
-  service:
-    enabled: true
-    type: ClusterIP
-    port: 8080
-    metricsPort: 9090
-  probes:
-    liveness:
-      path: /healthz
-      port: http
-      initialDelaySeconds: 15
-      periodSeconds: 10
-      timeoutSeconds: 2
-      failureThreshold: 3
-    readiness:
-      path: /readyz
-      port: http
-      initialDelaySeconds: 5
-      periodSeconds: 10
-      timeoutSeconds: 2
-      failureThreshold: 3
-    startup:
-      enabled: true
-      path: /healthz
-      port: http
-      initialDelaySeconds: 0
-      periodSeconds: 5
-      timeoutSeconds: 2
-      failureThreshold: 24
-  terminationGracePeriodSeconds: 45
-  lifecycle:
-    preStopSleepSeconds: 10
-  strategy:
-    type: RollingUpdate
-    rollingUpdate:
-      maxUnavailable: 0
-      maxSurge: 1
-  hpa:
-    enabled: false
-    minReplicas: 2
-    maxReplicas: 10
-    targetCPUUtilizationPercentage: 70
-    targetMemoryUtilizationPercentage: 80
-  podDisruptionBudget:
-    enabled: true
-    minAvailable: 1
-  nodeSelector: {}
-  tolerations: []
-  affinity: {}
-  priorityClassName: ""
-  podAnnotations: {}
-  resources:
-    requests:
-      cpu: 250m
-      memory: 256Mi
-    limits:
-      cpu: "1"
-      memory: 1Gi
-  podSecurityContext:
-    fsGroup: 65532
-    seccompProfile:
-      type: RuntimeDefault
-  securityContext:
-    allowPrivilegeEscalation: false
-    readOnlyRootFilesystem: true
-    runAsNonRoot: true
-    capabilities:
-      drop:
-        - ALL
-  serviceAccount:
-    create: true
-    name: ""
-    annotations: {}
-    automountServiceAccountToken: false
-
-streamProcessor:
-  enabled: false
-  image:
-    repository: telemetry-fabric/stream-processor
-    tag: "0.1.0"
-    pullPolicy: IfNotPresent
-  replicas: 2
-  command: []
-  args: []
-  env: []
-  extraEnvFrom: []
-  secrets:
-    create: false
-    name: ""
-    stringData: {}
-  configMap:
-    create: true
-    name: ""
-    mountPath: /etc/telemetry-fabric/stream-processor
-    data:
-      processor.yaml: |
-        input_topic: chain.events.raw
-        output_topics:
-          critical: chain.events.critical
-          important: chain.events.important
-          aggregate: chain.events.aggregate
-  service:
-    enabled: true
-    type: ClusterIP
-    port: 8080
-    metricsPort: 9090
-  probes:
-    liveness:
-      path: /healthz
-      port: http
-      initialDelaySeconds: 15
-      periodSeconds: 10
-      timeoutSeconds: 2
-      failureThreshold: 3
-    readiness:
-      path: /readyz
-      port: http
-      initialDelaySeconds: 5
-      periodSeconds: 10
-      timeoutSeconds: 2
-      failureThreshold: 3
-    startup:
-      enabled: true
-      path: /healthz
-      port: http
-      initialDelaySeconds: 0
-      periodSeconds: 5
-      timeoutSeconds: 2
-      failureThreshold: 24
-  terminationGracePeriodSeconds: 45
-  lifecycle:
-    preStopSleepSeconds: 10
-  strategy:
-    type: RollingUpdate
-    rollingUpdate:
-      maxUnavailable: 0
-      maxSurge: 1
-  hpa:
-    enabled: false
-    minReplicas: 2
-    maxReplicas: 10
-    targetCPUUtilizationPercentage: 70
-    targetMemoryUtilizationPercentage: 80
-  podDisruptionBudget:
-    enabled: true
-    minAvailable: 1
-  nodeSelector: {}
-  tolerations: []
-  affinity: {}
-  priorityClassName: ""
-  podAnnotations: {}
-  resources:
-    requests:
-      cpu: 250m
-      memory: 256Mi
-    limits:
-      cpu: "1"
-      memory: 1Gi
-  podSecurityContext:
-    fsGroup: 65532
-    seccompProfile:
-      type: RuntimeDefault
-  securityContext:
-    allowPrivilegeEscalation: false
-    readOnlyRootFilesystem: true
-    runAsNonRoot: true
-    capabilities:
-      drop:
-        - ALL
-  serviceAccount:
-    create: true
-    name: ""
-    annotations: {}
-    automountServiceAccountToken: false
-
-storage:
-  redpanda:
-    enabled: false
-    image:
-      repository: docker.redpanda.com/redpandadata/redpanda
-      tag: "v24.3.1"
-      pullPolicy: IfNotPresent
-    replicas: 1
-    storageSize: 20Gi
-    storageClass: ""
-    resources:
-      requests:
-        cpu: 500m
-        memory: 1Gi
-      limits:
-        cpu: "2"
-        memory: 2Gi
-    nodeSelector: {}
-    tolerations: []
-    affinity: {}
-  clickhouse:
-    enabled: false
-    image:
-      repository: clickhouse/clickhouse-server
-      tag: "24.12"
-      pullPolicy: IfNotPresent
-    replicas: 1
-    storageSize: 50Gi
-    storageClass: ""
-    resources:
-      requests:
-        cpu: 500m
-        memory: 1Gi
-      limits:
-        cpu: "2"
-        memory: 4Gi
-    nodeSelector: {}
-    tolerations: []
-    affinity: {}
 
 observability:
   prometheus:

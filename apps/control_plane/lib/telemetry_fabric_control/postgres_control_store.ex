@@ -3,9 +3,8 @@ defmodule TelemetryFabricControl.PostgresControlStore do
   PostgreSQL-backed control-plane store.
 
   This adapter is used when `TELEMETRY_FABRIC_CONTROL_STORAGE=postgres`.
-  The legacy OTP stores remain available for local MVP operation, but in this
-  mode PostgreSQL is the source of truth for agents, pipeline versions,
-  commands, and audit events.
+  PostgreSQL is the source of truth for agents, pipeline versions, commands,
+  and audit events in this mode.
   """
 
   import Ecto.Query

@@ -738,9 +738,9 @@ mod tests {
 tenant: "payments-prod"
 pipeline: "default"
 receivers:
-  tf-line:
-    protocol: "tf_line"
-    endpoint: "127.0.0.1:4319"
+  otlp-grpc:
+    protocol: "otlp_grpc"
+    endpoint: "0.0.0.0:4317"
 processors:
   memory-limiter:
     enabled: true
@@ -780,9 +780,9 @@ routes:
 tenant: "payments-prod"
 pipeline: "default"
 receivers:
-  tf-line:
-    protocol: "tf_line"
-    endpoint: "127.0.0.1:4319"
+  otlp-grpc:
+    protocol: "otlp_grpc"
+    endpoint: "0.0.0.0:4317"
 exporters:
   stdout:
     protocol: "stdout"

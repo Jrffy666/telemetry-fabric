@@ -3,8 +3,7 @@ defmodule TelemetryFabricControl.Repo do
   PostgreSQL repository for the production control-plane persistence adapter.
 
   The repository is only started by the application when
-  `TELEMETRY_FABRIC_CONTROL_DATABASE_URL` is present, so the MVP can still run
-  without an external database.
+  `TELEMETRY_FABRIC_CONTROL_DATABASE_URL` is present.
   """
 
   use Ecto.Repo,

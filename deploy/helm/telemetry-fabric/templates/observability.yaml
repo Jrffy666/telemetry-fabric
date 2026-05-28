@@ -23,20 +23,6 @@ data:
           - targets:
               - {{ include "telemetry-fabric.controlPlaneName" . }}:{{ .Values.controlPlane.service.port }}
       {{- end }}
-      {{- if and .Values.crawler.enabled .Values.crawler.service.enabled }}
-      - job_name: telemetry-chain-crawler
-        metrics_path: /metrics
-        static_configs:
-          - targets:
-              - {{ include "telemetry-fabric.crawlerName" . }}:{{ .Values.crawler.service.metricsPort }}
-      {{- end }}
-      {{- if and .Values.streamProcessor.enabled .Values.streamProcessor.service.enabled }}
-      - job_name: telemetry-stream-processor
-        metrics_path: /metrics
-        static_configs:
-          - targets:
-              - {{ include "telemetry-fabric.streamProcessorName" . }}:{{ .Values.streamProcessor.service.metricsPort }}
-      {{- end }}
 ---
 apiVersion: v1
 kind: Service

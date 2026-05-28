@@ -2,9 +2,8 @@ defmodule TelemetryFabricControl.PostgresSync do
   @moduledoc """
   Periodically syncs the OTP control-plane state into PostgreSQL.
 
-  The control plane keeps the dependency-free OTP stores as the source of truth
-  for the current MVP. This process is the bridge that writes consistent
-  snapshots through Ecto when PostgreSQL is configured.
+  This process writes consistent snapshots through Ecto when PostgreSQL is
+  configured alongside dependency-free OTP stores.
   """
 
   use GenServer

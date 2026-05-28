@@ -3,7 +3,6 @@ mod control_client;
 mod otlp;
 mod otlp_http;
 mod runtime;
-mod tf_line;
 
 use config_file::load_pipeline_config;
 use control_client::{
@@ -23,8 +22,7 @@ use telemetry_core::{
     ExporterConfig, ExporterProtocol, ExporterRetryConfig, PipelineConfig, ReceiverProtocol,
     RouteConfig, SignalKind, TelemetryRecord, TlsConfig,
 };
-use tf_line::parse_line_record;
-use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::Mutex;
 
@@ -130,56 +128,6 @@ async fn run() -> Result<(), DynError> {
     }
 
     runtime.lock().await.flush_to_stdout(1024).await?;
-    Ok(())
-}
-
-async fn serve_line_protocol(
-    bind: String,
-    runtime: Arc<Mutex<AgentRuntime>>,
-) -> Result<(), DynError> {
-    let listener = TcpListener::bind(&bind).await?;
-    println!("telemetry-agent listening on {bind} using tf-line protocol");
-
-    loop {
-        match listener.accept().await {
-            Ok((stream, _addr)) => {
-                let runtime = Arc::clone(&runtime);
-                tokio::spawn(async move {
-                    if let Err(err) = handle_client(stream, runtime).await {
-                        eprintln!("client failed: {err}");
-                    }
-                });
-            }
-            Err(err) => eprintln!("accept failed: {err}"),
-        }
-    }
-}
-
-async fn handle_client(
-    stream: TcpStream,
-    runtime: Arc<Mutex<AgentRuntime>>,
-) -> Result<(), DynError> {
-    let peer = stream.peer_addr().ok();
-    let (reader, mut writer) = stream.into_split();
-    let mut lines = BufReader::new(reader).lines();
-
-    while let Some(line) = lines.next_line().await? {
-        if line.trim().is_empty() {
-            continue;
-        }
-
-        let record = parse_line_record(&line)?;
-        {
-            let mut runtime = runtime.lock().await;
-            runtime.ingest(record)?;
-        }
-        writer.write_all(b"ok\n").await?;
-    }
-
-    if let Some(peer) = peer {
-        println!("client disconnected: {peer}");
-    }
-
     Ok(())
 }
 
@@ -354,15 +302,6 @@ async fn run_receiver_until_shutdown(
     shutdown_drain_timeout: Duration,
 ) -> Result<(), DynError> {
     match receiver_mode {
-        ReceiverMode::TfLine(bind) => {
-            tokio::select! {
-                result = serve_line_protocol(bind, Arc::clone(&runtime)) => result,
-                signal = wait_for_shutdown_signal() => {
-                    signal?;
-                    drain_for_shutdown(runtime, flush_batch_size, shutdown_drain_timeout).await
-                }
-            }
-        }
         ReceiverMode::OtlpGrpc(bind) => {
             let tenant_id = runtime.lock().await.config().tenant_id.clone();
             tokio::select! {
@@ -653,7 +592,6 @@ struct Args {
     tenant_id: Option<String>,
     config_path: Option<PathBuf>,
     queue_dir: PathBuf,
-    listen: Option<String>,
     otlp_grpc: Option<String>,
     otlp_http: Option<String>,
     otlp_export_endpoint: Option<String>,
@@ -681,7 +619,6 @@ impl Args {
             tenant_id: None,
             config_path: None,
             queue_dir: PathBuf::from(".telemetry-fabric/queue"),
-            listen: None,
             otlp_grpc: None,
             otlp_http: None,
             otlp_export_endpoint: None,
@@ -715,9 +652,6 @@ impl Args {
                 }
                 "--queue-dir" => {
                     args.queue_dir = PathBuf::from(next_value(&mut values, "--queue-dir")?);
-                }
-                "--listen" => {
-                    args.listen = Some(next_value(&mut values, "--listen")?);
                 }
                 "--otlp-grpc" => {
                     args.otlp_grpc = Some(next_value(&mut values, "--otlp-grpc")?);
@@ -794,16 +728,12 @@ impl Args {
             }
         }
 
-        let receiver_modes = [
-            args.listen.is_some(),
-            args.otlp_grpc.is_some(),
-            args.otlp_http.is_some(),
-        ]
-        .into_iter()
-        .filter(|enabled| *enabled)
-        .count();
+        let receiver_modes = [args.otlp_grpc.is_some(), args.otlp_http.is_some()]
+            .into_iter()
+            .filter(|enabled| *enabled)
+            .count();
         if receiver_modes > 1 {
-            return Err("choose only one receiver mode for this MVP agent process".into());
+            return Err("choose only one receiver mode for this agent process".into());
         }
 
         Ok(args)
@@ -812,16 +742,11 @@ impl Args {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum ReceiverMode {
-    TfLine(String),
     OtlpGrpc(String),
     OtlpHttp { bind: String, tls: TlsConfig },
 }
 
 fn receiver_mode(args: &Args, runtime: &AgentRuntime) -> Result<Option<ReceiverMode>, DynError> {
-    if let Some(bind) = args.listen.clone() {
-        return Ok(Some(ReceiverMode::TfLine(bind)));
-    }
-
     if let Some(bind) = args.otlp_grpc.clone() {
         return Ok(Some(ReceiverMode::OtlpGrpc(bind)));
     }
@@ -857,15 +782,7 @@ fn receiver_mode(args: &Args, runtime: &AgentRuntime) -> Result<Option<ReceiverM
         }));
     }
 
-    if let Some(receiver) = config
-        .receivers
-        .iter()
-        .find(|receiver| receiver.protocol == ReceiverProtocol::TfLine)
-    {
-        return Ok(Some(ReceiverMode::TfLine(receiver.endpoint.clone())));
-    }
-
-    Err("config has no supported receiver; supported receivers are otlp_grpc, otlp_http, and tf_line".into())
+    Err("config has no supported receiver; supported receivers are otlp_grpc and otlp_http".into())
 }
 
 fn build_pipeline_config(args: &Args) -> Result<PipelineConfig, DynError> {
@@ -988,7 +905,6 @@ fn print_help() {
          Usage:\n\
            telemetry-agent --self-test [--tenant TENANT] [--queue-dir DIR]\n\
            telemetry-agent --config FILE [--queue-dir DIR]\n\
-           telemetry-agent --listen HOST:PORT [--queue-dir DIR]\n\
            telemetry-agent --otlp-grpc HOST:PORT [--queue-dir DIR]\n\
            telemetry-agent --otlp-http HOST:PORT [--queue-dir DIR]\n\
            telemetry-agent [--queue-dir DIR]\n\
@@ -997,7 +913,6 @@ fn print_help() {
            --tenant TENANT     Tenant id to use for generated records.\n\
            --config FILE       Load pipeline configuration from YAML.\n\
            --queue-dir DIR     Durable queue directory.\n\
-           --listen HOST:PORT  Start the minimal tf-line TCP receiver.\n\
            --otlp-grpc HOST:PORT Start the OTLP/gRPC trace, metrics, and logs receiver.\n\
            --otlp-http HOST:PORT Start the OTLP/HTTP protobuf trace, metrics, and logs receiver.\n\
            --otlp-export-endpoint HOST:PORT|URL Forward traces, metrics, and logs to an upstream OTLP/gRPC endpoint.\n\
@@ -1108,8 +1023,8 @@ mod tests {
     fn rejects_multiple_receiver_modes() {
         let result = Args::parse(
             [
-                "--listen",
-                "127.0.0.1:4319",
+                "--otlp-grpc",
+                "127.0.0.1:4317",
                 "--otlp-http",
                 "127.0.0.1:4318",
             ]

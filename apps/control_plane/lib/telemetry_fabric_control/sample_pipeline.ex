@@ -1,6 +1,6 @@
 defmodule TelemetryFabricControl.SamplePipeline do
   @moduledoc """
-  Factory for the default MVP pipeline.
+  Factory for the default control-plane pipeline.
   """
 
   alias TelemetryFabricControl.PipelineConfig
@@ -11,8 +11,7 @@ defmodule TelemetryFabricControl.SamplePipeline do
       name: "default",
       receivers: [
         %{name: "otlp-grpc", protocol: "otlp_grpc", endpoint: "0.0.0.0:4317"},
-        %{name: "otlp-http", protocol: "otlp_http", endpoint: "0.0.0.0:4318"},
-        %{name: "tf-line", protocol: "tf_line", endpoint: "127.0.0.1:4319"}
+        %{name: "otlp-http", protocol: "otlp_http", endpoint: "0.0.0.0:4318"}
       ],
       processors: [
         %{name: "memory-limiter", kind: "memory_limiter", enabled: true},

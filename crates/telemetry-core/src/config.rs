@@ -25,9 +25,6 @@ pub struct ReceiverConfig {
 pub enum ReceiverProtocol {
     OtlpGrpc,
     OtlpHttp,
-    PrometheusRemoteWrite,
-    FileLog,
-    TfLine,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -42,7 +39,6 @@ pub enum ProcessorKind {
     MemoryLimiter,
     Batch,
     Redact,
-    TailSampling,
     TenantRateLimit,
 }
 
@@ -101,9 +97,6 @@ pub enum ExporterProtocol {
     OtlpHttp,
     OtlpHttpJson,
     PrometheusRemoteWrite,
-    Kafka,
-    S3,
-    ClickHouse,
     Stdout,
     File,
 }
@@ -147,12 +140,6 @@ impl Default for PipelineConfig {
                     name: "otlp-http".to_string(),
                     protocol: ReceiverProtocol::OtlpHttp,
                     endpoint: "0.0.0.0:4318".to_string(),
-                    tls: TlsConfig::disabled(),
-                },
-                ReceiverConfig {
-                    name: "tf-line".to_string(),
-                    protocol: ReceiverProtocol::TfLine,
-                    endpoint: "127.0.0.1:4319".to_string(),
                     tls: TlsConfig::disabled(),
                 },
             ],

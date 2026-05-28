@@ -1,6 +1,6 @@
 defmodule TelemetryFabricControl.Json do
   @moduledoc """
-  Small dependency-free JSON codec for the MVP HTTP control adapter.
+  Small dependency-free JSON codec for the HTTP control adapter.
 
   This deliberately supports only standard JSON values and returns object keys as
   strings. Transport adapters normalize keys before calling the domain API.

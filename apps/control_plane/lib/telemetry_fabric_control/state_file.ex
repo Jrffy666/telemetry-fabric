@@ -1,10 +1,9 @@
 defmodule TelemetryFabricControl.StateFile do
   @moduledoc """
-  Small file-backed persistence helper for the MVP control plane.
+  Small file-backed persistence helper for the control plane.
 
-  This is intentionally dependency-free. It gives the OTP stores a durable
-  boundary now, while leaving room to replace the implementation with
-  PostgreSQL/Ecto later without changing their public APIs.
+  This is intentionally dependency-free and gives the OTP stores a durable
+  boundary for local operation.
   """
 
   @format_version 1

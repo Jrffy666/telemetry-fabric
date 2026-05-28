@@ -48,12 +48,6 @@ Implemented:
 - `RedactProcessor`: masks sensitive attributes such as authorization headers,
   passwords, secrets, tokens, and database statements.
 
-Planned:
-
-- Tail-based sampling.
-- Resource attribute enrichment.
-- Log body redaction with structured parsers.
-
 ## Exporters
 
 `telemetry-exporters` owns exporter implementations behind the `Exporter` trait.
@@ -74,12 +68,6 @@ Implemented:
   identifier rules, and histogram/exponential histogram/summary records are
   expanded to Prometheus bucket, quantile, sum, and count series.
 
-Planned:
-
-- Kafka
-- S3-compatible object storage
-- ClickHouse
-
 ## Runtime Semantics
 
 The agent runtime follows this sequence during `flush`:
@@ -91,18 +79,17 @@ The agent runtime follows this sequence during `flush`:
 5. Export each grouped batch.
 6. Commit the queue cursor only after all exports succeed.
 
-This gives the MVP at-least-once delivery semantics for exporter failures.
+This gives the agent at-least-once delivery semantics for exporter failures.
 Each exporter call is guarded by a per-exporter timeout and retried with
 exponential backoff before the flush fails and leaves the batch queued for a
 later retry. Defaults are 30 seconds, 3 attempts, and 100 ms initial backoff.
 YAML exporters can override this with `retry.max_attempts`,
 `retry.timeout_ms`, and `retry.initial_backoff_ms`.
 
-In `--listen`, `--otlp-grpc`, and `--otlp-http` modes, the receivers
+In `--otlp-grpc` and `--otlp-http` modes, the receivers
 automatically call `flush` from a background worker. `--flush-batch-size`
 controls the maximum records per flush, and `--flush-interval-ms` controls the
-worker cadence. The TCP line receiver accepts clients concurrently, while queue
-mutation and export remain serialized inside the runtime.
+worker cadence. Queue mutation and export remain serialized inside the runtime.
 
 When the agent receives SIGINT or SIGTERM in receiver mode, it stops accepting
 new receiver work and drains the durable queue with the shutdown flush path
@@ -125,7 +112,7 @@ exporter.
 
 ## Control Commands
 
-The MVP control-plane client supports these command kinds from heartbeat
+The control-plane client supports these command kinds from heartbeat
 responses:
 
 - `reload_config`: fetch, checksum-verify, parse, and apply the latest YAML
@@ -203,6 +190,6 @@ The file controls:
 - per-exporter retry budgets and timeouts with `retry.max_attempts`,
   `retry.timeout_ms`, and `retry.initial_backoff_ms`
 
-Command-line flags such as `--tenant`, `--otlp-grpc`, `--otlp-http`, `--listen`, and
+Command-line flags such as `--tenant`, `--otlp-grpc`, `--otlp-http`, and
 `--otlp-export-endpoint` can still override runtime behavior for local testing
 or simple deployments.

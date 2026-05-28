@@ -1,3 +1,0 @@
-{"tx_hash":"0x1","from_address":"0xaaa","to_address":"0xbbb","token_address":"0xtoken","amount_usd":"100.50"}
-{"tx_hash":"0x2","from_address":"0xbbb","to_address":"0xccc","token_address":"0xtoken","amount_usd":"250000"}
-{"tx_hash":"0x3","from_address":"0xddd","to_address":"0xbbb","token_symbol":"ETH","amount_usd":"25"}

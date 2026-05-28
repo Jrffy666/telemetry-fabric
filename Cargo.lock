@@ -900,13 +900,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "telemetry-module-sdk"
-version = "0.1.0"
-dependencies = [
- "telemetry-core",
-]
-
-[[package]]
 name = "telemetry-otlp"
 version = "0.1.0"
 dependencies = [
@@ -919,7 +912,6 @@ name = "telemetry-processors"
 version = "0.1.0"
 dependencies = [
  "telemetry-core",
- "telemetry-module-sdk",
 ]
 
 [[package]]

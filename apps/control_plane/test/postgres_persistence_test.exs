@@ -16,16 +16,6 @@ defmodule TelemetryFabricControl.PostgresPersistenceTest do
   alias TelemetryFabricControl.Schema.Agent
   alias TelemetryFabricControl.Schema.AgentCommand
   alias TelemetryFabricControl.Schema.AuditEvent
-  alias TelemetryFabricControl.Schema.BlockchainAddressWatch
-  alias TelemetryFabricControl.Schema.BlockchainChain
-  alias TelemetryFabricControl.Schema.BlockchainCheckpoint
-  alias TelemetryFabricControl.Schema.BlockchainContractWatch
-  alias TelemetryFabricControl.Schema.BlockchainCrawlAssignment
-  alias TelemetryFabricControl.Schema.BlockchainFilterRule
-  alias TelemetryFabricControl.Schema.BlockchainRpcEndpoint
-  alias TelemetryFabricControl.Schema.BlockchainTokenWatch
-  alias TelemetryFabricControl.Schema.ModuleConfigVersion
-  alias TelemetryFabricControl.Schema.ModuleRegistration
   alias TelemetryFabricControl.Schema.PipelineVersion
   alias TelemetryFabricControl.Schema.Tenant
 
@@ -127,22 +117,10 @@ defmodule TelemetryFabricControl.PostgresPersistenceTest do
     assert sql =~ "CREATE TABLE IF NOT EXISTS pipeline_versions"
     assert sql =~ "CREATE TABLE IF NOT EXISTS agent_commands"
     assert sql =~ "CREATE TABLE IF NOT EXISTS audit_events"
-    assert sql =~ "CREATE TABLE IF NOT EXISTS module_registry"
-    assert sql =~ "CREATE TABLE IF NOT EXISTS module_config_versions"
-    assert sql =~ "CREATE TABLE IF NOT EXISTS blockchain_chains"
-    assert sql =~ "CREATE TABLE IF NOT EXISTS blockchain_rpc_endpoints"
-    assert sql =~ "CREATE TABLE IF NOT EXISTS blockchain_address_watchlist"
-    assert sql =~ "CREATE TABLE IF NOT EXISTS blockchain_contract_watchlist"
-    assert sql =~ "CREATE TABLE IF NOT EXISTS blockchain_token_watchlist"
-    assert sql =~ "CREATE TABLE IF NOT EXISTS blockchain_filter_rules"
-    assert sql =~ "CREATE TABLE IF NOT EXISTS blockchain_crawl_assignments"
-    assert sql =~ "CREATE TABLE IF NOT EXISTS blockchain_checkpoints"
     assert sql =~ "audit_events_event_id_idx"
     assert sql =~ "agent_commands_pending_idx"
     assert sql =~ "agent_commands_delivered_lease_idx"
     assert sql =~ "pipeline_versions_latest_idx"
-    assert sql =~ "module_config_versions_latest_idx"
-    assert sql =~ "blockchain_rpc_endpoints_chain_idx"
   end
 
   test "postgres migration SQL splits into executable statements" do
@@ -438,89 +416,6 @@ defmodule TelemetryFabricControl.PostgresPersistenceTest do
              action: "pipeline.updated",
              resource: "payments-prod/default",
              inserted_at: now
-           }).valid?
-
-    assert ModuleRegistration.changeset(%{
-             module_name: "blockchain",
-             display_name: "Blockchain",
-             owner: "data-platform",
-             enabled: true
-           }).valid?
-
-    assert ModuleConfigVersion.changeset(%{
-             tenant_id: "payments-prod",
-             module_name: "blockchain",
-             version: 1,
-             config: %{"chains" => []},
-             checksum: String.duplicate("b", 64),
-             updated_by: "operator"
-           }).valid?
-
-    assert BlockchainChain.changeset(%{
-             tenant_id: "payments-prod",
-             chain_key: "ethereum-mainnet",
-             display_name: "Ethereum Mainnet",
-             network: "mainnet",
-             enabled: true
-           }).valid?
-
-    assert BlockchainRpcEndpoint.changeset(%{
-             tenant_id: "payments-prod",
-             endpoint_id: "eth-mainnet-primary",
-             chain_key: "ethereum-mainnet",
-             url: "https://rpc.example.invalid",
-             priority: 10,
-             enabled: true
-           }).valid?
-
-    assert BlockchainAddressWatch.changeset(%{
-             tenant_id: "payments-prod",
-             entry_id: "treasury",
-             chain_key: "ethereum-mainnet",
-             address: "0x0000000000000000000000000000000000000000",
-             enabled: true
-           }).valid?
-
-    assert BlockchainContractWatch.changeset(%{
-             tenant_id: "payments-prod",
-             contract_id: "usdc",
-             chain_key: "ethereum-mainnet",
-             address: "0x0000000000000000000000000000000000000000",
-             enabled: true
-           }).valid?
-
-    assert BlockchainTokenWatch.changeset(%{
-             tenant_id: "payments-prod",
-             token_id: "usdc",
-             chain_key: "ethereum-mainnet",
-             contract_address: "0x0000000000000000000000000000000000000000",
-             decimals: 6,
-             enabled: true
-           }).valid?
-
-    assert BlockchainFilterRule.changeset(%{
-             tenant_id: "payments-prod",
-             rule_id: "large-transfers",
-             name: "Large transfers",
-             expression: %{"field" => "amount", "op" => "gte", "value" => "1000000"},
-             action: "keep",
-             enabled: true
-           }).valid?
-
-    assert BlockchainCrawlAssignment.changeset(%{
-             tenant_id: "payments-prod",
-             assignment_id: "crawler-a-eth",
-             chain_key: "ethereum-mainnet",
-             crawler_id: "crawler-a",
-             enabled: true
-           }).valid?
-
-    assert BlockchainCheckpoint.changeset(%{
-             tenant_id: "payments-prod",
-             assignment_id: "crawler-a-eth",
-             chain_key: "ethereum-mainnet",
-             cursor: %{"block" => 100},
-             updated_by: "crawler-a"
            }).valid?
 
     refute AgentCommand.changeset(%{

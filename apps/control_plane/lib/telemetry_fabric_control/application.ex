@@ -20,10 +20,6 @@ defmodule TelemetryFabricControl.Application do
          storage_path: TelemetryFabricControl.StateFile.path(storage_dir, "agent_registry.term")},
         {TelemetryFabricControl.PipelineStore,
          storage_path: TelemetryFabricControl.StateFile.path(storage_dir, "pipeline_store.term")},
-        {TelemetryFabricControl.Modules.Store,
-         storage_path: TelemetryFabricControl.StateFile.path(storage_dir, "module_store.term")},
-        {TelemetryFabricControl.Modules.Blockchain.Store,
-         storage_path: TelemetryFabricControl.StateFile.path(storage_dir, "blockchain_store.term")},
         {TelemetryFabricControl.CommandQueue,
          storage_path: TelemetryFabricControl.StateFile.path(storage_dir, "command_queue.term")}
       ]

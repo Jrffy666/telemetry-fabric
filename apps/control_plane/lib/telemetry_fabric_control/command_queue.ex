@@ -1,6 +1,6 @@
 defmodule TelemetryFabricControl.CommandQueue do
   @moduledoc """
-  Durable MVP queue for operator-initiated agent control commands.
+  Durable queue for operator-initiated agent control commands.
 
   Heartbeat-derived commands such as `reload_config` can be returned directly by
   `ControlService`; this queue is for commands that must survive process

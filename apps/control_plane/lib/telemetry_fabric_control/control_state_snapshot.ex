@@ -2,9 +2,8 @@ defmodule TelemetryFabricControl.ControlStateSnapshot do
   @moduledoc """
   Immutable snapshot of the control-plane state.
 
-  This is the handoff shape for future PostgreSQL/Ecto persistence. It lets the
-  current OTP stores expose a consistent state image without leaking GenServer
-  internals.
+  This lets the OTP stores expose a consistent state image without leaking
+  GenServer internals.
   """
 
   alias TelemetryFabricControl.AgentRegistry

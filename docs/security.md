@@ -1,9 +1,9 @@
 # Security Model
 
-## MVP
+## Implemented Security
 
-The MVP establishes security boundaries but does not yet enforce all production
-controls.
+The core system establishes security boundaries for the agent and control-plane
+path. Remaining hardening items are listed below.
 
 Implemented or represented:
 
@@ -12,10 +12,10 @@ Implemented or represented:
 - Audit events for agent registration, pipeline changes, pipeline rollback, and
   operator command delivery.
 - Per-tenant queue quotas and processor-level ingest rate limiting.
-- Bearer-token authorization for the MVP control-plane HTTP API. Agent
+- Bearer-token authorization for the control-plane HTTP API. Agent
   endpoints accept the configured agent token or operator token; operator
   endpoints require the operator token when configured.
-- No inline secret model in the protocol definitions.
+- Pipeline/config payloads avoid inline secrets by design.
 - OTLP/HTTP exporter TLS for `https://` endpoints, with custom CA and optional
   client certificates.
 - OTLP/HTTP receiver TLS/mTLS when configured with server cert/key and optional

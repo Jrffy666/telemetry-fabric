@@ -58,6 +58,38 @@ defmodule TelemetryFabricControl.HttpControlServerTest do
     assert current_config_body["update"] == nil
   end
 
+  test "returns config update signatures when a signing key is configured", %{port: port} do
+    with_env("TELEMETRY_FABRIC_CONTROL_CONFIG_SIGNING_KEY", "test-signing-key")
+
+    "payments-prod"
+    |> SamplePipeline.build()
+    |> PipelineStore.put_pipeline("test")
+
+    assert {200, _register_body} =
+             post_json(port, "/v1/agents/register", %{
+               agent_id: "agent-1",
+               tenant_id: "payments-prod",
+               hostname: "node-a",
+               version: "0.1.0"
+             })
+
+    assert {200, config_body} =
+             post_json(port, "/v1/agents/config", %{
+               agent_id: "agent-1",
+               tenant_id: "payments-prod",
+               current_version: 0
+             })
+
+    payload = config_body["update"]["pipeline_config"]
+
+    expected_signature =
+      "hmac-sha256=" <>
+        (:crypto.mac(:hmac, :sha256, "test-signing-key", payload)
+         |> Base.encode16(case: :lower))
+
+    assert config_body["update"]["signature"] == expected_signature
+  end
+
   test "serves pipeline publication workflow", %{port: port} do
     assert {200, publish_body} =
              post_json(port, "/v1/pipelines", pipeline_payload("payments-prod"))
@@ -372,7 +404,7 @@ defmodule TelemetryFabricControl.HttpControlServerTest do
       pipeline: "default",
       actor: "operator",
       receivers: [
-        %{name: "tf-line", protocol: "tf_line", endpoint: "127.0.0.1:4319"}
+        %{name: "otlp-grpc", protocol: "otlp_grpc", endpoint: "0.0.0.0:4317"}
       ],
       processors: [
         %{name: "memory-limiter", enabled: true},

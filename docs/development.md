@@ -4,66 +4,7 @@
 
 - Rust 1.94 or newer.
 - Elixir 1.16 or newer for the control plane.
-- Python 3.11 or newer for analytics tests.
-- CMake plus a C/C++ compiler for compute accelerator tests.
 - Docker for integration environments.
-
-## Local Toolchain Overrides
-
-The root `Makefile` uses overridable tool variables for the Python analytics
-and C++ compute accelerator targets:
-
-- `PYTHON` defaults to `python`.
-- `CMAKE` defaults to `cmake`.
-- `CTEST` defaults to `ctest`.
-- `CMAKE_GENERATOR` is empty by default and is passed to CMake as `-G` when set.
-- `CMAKE_ARCH` is empty by default and is passed to CMake as `-A` when set.
-- `CMAKE_BUILD_DIR`, `CMAKE_CONFIGURE_ARGS`, `CMAKE_BUILD_ARGS`, and
-  `CTEST_ARGS` can tune the C++ build and test commands.
-
-On Windows, inspect PATH, common install directories, and Visual Studio Build
-Tools locations:
-
-```powershell
-.\scripts\dev\find-windows-toolchain.ps1
-.\scripts\dev\find-windows-toolchain.ps1 -AsMakeArgs
-```
-
-Set overrides in the current PowerShell session before running Make. Use
-forward slashes for paths that contain backslashes, and do not include quotes
-inside the environment variable values because the `Makefile` quotes tool
-paths when invoking them:
-
-```powershell
-$env:PYTHON = "C:/Users/you/AppData/Local/Programs/Python/Python311/python.exe"
-$env:CMAKE = "C:/Program Files/CMake/bin/cmake.exe"
-$env:CTEST = "C:/Program Files/CMake/bin/ctest.exe"
-$env:CMAKE_GENERATOR = "Visual Studio 17 2022"
-$env:CMAKE_ARCH = "x64"
-
-make python-test
-make cpp-test
-```
-
-The WindowsApps `python.exe` app execution alias is not a usable CPython
-installation for tests. If `python --version` opens the Microsoft Store prompt,
-install CPython or set `PYTHON` to a real `python.exe`.
-
-When MSVC is installed but `cl.exe` is not on PATH, either run from a
-Developer PowerShell for Visual Studio or use a Visual Studio CMake generator:
-
-```powershell
-$env:CMAKE_GENERATOR = "Visual Studio 17 2022"
-$env:CMAKE_ARCH = "x64"
-make cpp-test
-```
-
-For single-command overrides, pass the variables to Make:
-
-```powershell
-make python-test PYTHON="C:/Python311/python.exe"
-make cpp-test CMAKE="C:/Program Files/CMake/bin/cmake.exe" CTEST="C:/Program Files/CMake/bin/ctest.exe" CMAKE_GENERATOR="Visual Studio 17 2022" CMAKE_ARCH="x64"
-```
 
 ## Rust
 
@@ -96,12 +37,6 @@ Flush any records already in the local durable queue:
 
 ```bash
 cargo run -p telemetry-agent
-```
-
-Start the MVP TCP receiver:
-
-```bash
-cargo run -p telemetry-agent -- --listen 127.0.0.1:4319 --flush-batch-size 128
 ```
 
 Start the OTLP/gRPC trace, metrics, and logs receiver:
@@ -168,7 +103,7 @@ For Prometheus Remote Write, set a metrics route to an exporter with
 `http://prometheus:9090/api/v1/write`. The exporter sends Snappy-compressed
 protobuf `WriteRequest` payloads for metric records only.
 
-Start the agent with the MVP HTTP control-plane client:
+Start the agent with the HTTP control-plane client:
 
 ```bash
 cargo run -p telemetry-agent -- --tenant payments-prod --agent-id agent-1 --otlp-grpc 127.0.0.1:4317 --control-endpoint http://127.0.0.1:4001
@@ -183,7 +118,7 @@ The client registers once, then sends periodic heartbeats. When the control
 plane returns `reload_config`, the agent fetches `/v1/agents/config`, verifies
 the SHA-256 checksum, parses the YAML pipeline, and reloads processors,
 exporters, routes, and limits in the running runtime. Receiver sockets are not
-rebound during this MVP hot reload. Operator commands can also pause exports,
+rebound during hot reload. Operator commands can also pause exports,
 resume exports, or ask the agent to drain queued records and exit so systemd or
 Kubernetes restarts it.
 
@@ -192,12 +127,6 @@ persistence now includes the plain SQL schema at
 `apps/control_plane/priv/postgres/001_control_plane_schema.sql`, row codecs that
 convert OTP state into the target tables, Ecto schemas, Repo wiring, a migration
 task, and a periodic `Ecto.Multi` snapshot sync for PostgreSQL persistence.
-
-Send a sample event:
-
-```bash
-printf "trace payments-prod checkout request-started\n" | nc 127.0.0.1 4319
-```
 
 ## Elixir
 
@@ -210,8 +139,8 @@ mix test
 
 The control-plane domain API is exposed by
 `TelemetryFabricControl.ControlService`. It implements the transport-neutral
-shape of the future AgentControl API: `register_agent/1`, `heartbeat/1`,
-`config_update/1`, `enqueue_command/3`, and `report_status/1`.
+agent-control workflow: `register_agent/1`, `heartbeat/1`, `config_update/1`,
+`enqueue_command/3`, and `report_status/1`.
 
 Run the control plane with dependency-free file persistence:
 
@@ -239,7 +168,7 @@ for the current VM process only. Test persistence paths stay relative to the
 app working directory so they do not depend on Windows absolute-path mkdir
 behavior.
 
-Run the control plane with the MVP HTTP control API:
+Run the control plane with the HTTP control API:
 
 ```powershell
 $env:TELEMETRY_FABRIC_CONTROL_HTTP_LISTEN = "127.0.0.1:4001"
@@ -312,7 +241,7 @@ Publish a pipeline version:
   "pipeline": "default",
   "actor": "operator",
   "receivers": [
-    {"name": "tf-line", "protocol": "tf_line", "endpoint": "127.0.0.1:4319"}
+    {"name": "otlp-grpc", "protocol": "otlp_grpc", "endpoint": "0.0.0.0:4317"}
   ],
   "processors": [
     {"name": "memory-limiter", "enabled": true},
@@ -353,8 +282,8 @@ Example registration request:
 ```
 
 The directory stores `agent_registry.term`, `pipeline_store.term`,
-`command_queue.term`, and `audit_log.term`. This is an MVP durability boundary
-for local development and edge prototypes.
+`command_queue.term`, and `audit_log.term`. This is the durability boundary for
+file-backed local operation.
 
 Run a dry-run PostgreSQL migration without connecting to a database:
 
@@ -383,8 +312,7 @@ When `TELEMETRY_FABRIC_CONTROL_DATABASE_URL` is set, the OTP application starts
 supervision. Set `TELEMETRY_FABRIC_CONTROL_POSTGRES_SYNC=false` to disable the
 sync loop, or tune `TELEMETRY_FABRIC_CONTROL_POSTGRES_SYNC_INTERVAL_MS`. The
 live PostgreSQL persistence test is wired into CI with a disposable PostgreSQL
-service. The remaining production work is the Phoenix API and gRPC config
-stream.
+service.
 
 Set `TELEMETRY_FABRIC_CONTROL_STORAGE=postgres` to make PostgreSQL the
 control-plane source of truth instead of the file-backed OTP stores. This mode
@@ -400,7 +328,7 @@ docker compose -f deploy/docker/docker-compose.yml up --build
 ```
 
 The stack starts PostgreSQL, runs the control-plane schema migration through
-the release helper, exposes the MVP control-plane HTTP API on
+the release helper, exposes the control-plane HTTP API on
 `http://127.0.0.1:4001`, and starts an agent connected to that control plane.
 
 Build the individual images:
@@ -429,7 +357,7 @@ kubectl apply -f deploy/k8s/telemetry-agent-daemonset.yaml
 kubectl apply -f deploy/k8s/network-policy.yaml
 ```
 
-Install the Helm chart with the MVP control plane enabled:
+Install the Helm chart with the control plane enabled:
 
 ```bash
 helm install telemetry-fabric deploy/helm/telemetry-fabric --set controlPlane.enabled=true
@@ -446,6 +374,10 @@ kubectl create secret generic telemetry-fabric-postgres \
   --from-literal=database-url='postgres://user:password@postgres:5432/telemetry_fabric'
 kubectl create secret generic telemetry-fabric-agent-token --from-literal=token='agent-token'
 kubectl create secret generic telemetry-fabric-operator-token --from-literal=token='operator-token'
+kubectl create secret generic telemetry-fabric-control-plane-tls \
+  --from-file=ca.crt=ca.crt \
+  --from-file=tls.crt=control-plane.crt \
+  --from-file=tls.key=control-plane.key
 
 helm upgrade --install telemetry-fabric deploy/helm/telemetry-fabric \
   -f deploy/helm/telemetry-fabric/values-production.example.yaml
@@ -459,6 +391,11 @@ helm upgrade --install telemetry-fabric deploy/helm/telemetry-fabric \
   --set controlPlane.enabled=true \
   --set-file agent.config.inline=config/pipeline.example.yaml
 ```
+
+The production example sets `productionMode=true`, which makes Helm fail
+rendering unless the control plane uses PostgreSQL, required auth/database/TLS
+secrets are set, NetworkPolicy is enabled, and agent/control-plane image tags
+are pinned to non-`latest` values.
 
 The Helm chart also exposes baseline production hardening switches:
 `agent.serviceAccount`, `controlPlane.serviceAccount`,

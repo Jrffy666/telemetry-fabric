@@ -6,22 +6,6 @@ telemetry-fabric
 {{ include "telemetry-fabric.name" . }}-control-plane
 {{- end -}}
 
-{{- define "telemetry-fabric.crawlerName" -}}
-{{ include "telemetry-fabric.name" . }}-chain-crawler
-{{- end -}}
-
-{{- define "telemetry-fabric.streamProcessorName" -}}
-{{ include "telemetry-fabric.name" . }}-stream-processor
-{{- end -}}
-
-{{- define "telemetry-fabric.redpandaName" -}}
-{{ include "telemetry-fabric.name" . }}-redpanda
-{{- end -}}
-
-{{- define "telemetry-fabric.clickhouseName" -}}
-{{ include "telemetry-fabric.name" . }}-clickhouse
-{{- end -}}
-
 {{- define "telemetry-fabric.prometheusName" -}}
 {{ include "telemetry-fabric.name" . }}-prometheus
 {{- end -}}
@@ -69,21 +53,5 @@ app.kubernetes.io/component: {{ .component }}
 {{ .Values.controlPlane.serviceAccount.name }}
 {{- else -}}
 {{ include "telemetry-fabric.controlPlaneName" . }}
-{{- end -}}
-{{- end -}}
-
-{{- define "telemetry-fabric.crawlerServiceAccountName" -}}
-{{- if .Values.crawler.serviceAccount.name -}}
-{{ .Values.crawler.serviceAccount.name }}
-{{- else -}}
-{{ include "telemetry-fabric.crawlerName" . }}
-{{- end -}}
-{{- end -}}
-
-{{- define "telemetry-fabric.streamProcessorServiceAccountName" -}}
-{{- if .Values.streamProcessor.serviceAccount.name -}}
-{{ .Values.streamProcessor.serviceAccount.name }}
-{{- else -}}
-{{ include "telemetry-fabric.streamProcessorName" . }}
 {{- end -}}
 {{- end -}}

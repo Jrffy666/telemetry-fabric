@@ -1,9 +1,6 @@
 defmodule TelemetryFabricControl.ControlService do
   @moduledoc """
-  Protocol-neutral implementation of the AgentControl domain workflow.
-
-  This module mirrors the protobuf operations without binding the MVP to a
-  transport yet. A gRPC or HTTP adapter should delegate to these functions.
+  Protocol-neutral implementation of the agent-control domain workflow.
   """
 
   alias TelemetryFabricControl.AgentRegistry
@@ -20,7 +17,7 @@ defmodule TelemetryFabricControl.ControlService do
 
   defmodule ConfigUpdate do
     @moduledoc false
-    defstruct [:version, :pipeline_config, :checksum]
+    defstruct [:version, :pipeline_config, :checksum, :signature]
   end
 
   defmodule AgentStatusResponse do
@@ -176,7 +173,8 @@ defmodule TelemetryFabricControl.ControlService do
     %ConfigUpdate{
       version: pipeline.version,
       pipeline_config: payload,
-      checksum: sha256(payload)
+      checksum: sha256(payload),
+      signature: config_signature(payload)
     }
   end
 
@@ -316,6 +314,25 @@ defmodule TelemetryFabricControl.ControlService do
 
   defp sha256(payload) do
     :crypto.hash(:sha256, payload)
+    |> Base.encode16(case: :lower)
+  end
+
+  defp config_signature(payload) do
+    case System.get_env("TELEMETRY_FABRIC_CONTROL_CONFIG_SIGNING_KEY") do
+      value when is_binary(value) ->
+        if String.trim(value) == "" do
+          nil
+        else
+          "hmac-sha256=" <> hmac_sha256(value, payload)
+        end
+
+      _ ->
+        nil
+    end
+  end
+
+  defp hmac_sha256(key, payload) do
+    :crypto.mac(:hmac, :sha256, key, payload)
     |> Base.encode16(case: :lower)
   end
 end

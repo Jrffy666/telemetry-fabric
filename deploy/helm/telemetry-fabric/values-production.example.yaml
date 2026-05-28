@@ -3,6 +3,8 @@ image:
   tag: "0.1.0"
   pullPolicy: IfNotPresent
 
+productionMode: true
+
 imagePullSecrets:
   - name: registry-pull-secret
 
@@ -13,6 +15,11 @@ agent:
   controlAuthTokenSecret:
     name: telemetry-fabric-agent-token
     key: token
+  controlTlsSecret:
+    name: telemetry-fabric-control-plane-tls
+    caKey: ca.crt
+    certKey: tls.crt
+    keyKey: tls.key
   queueHostPath: /var/lib/telemetry-fabric
   shutdownDrainTimeoutMs: 30000
   terminationGracePeriodSeconds: 35
@@ -50,6 +57,10 @@ controlPlane:
     operatorTokenSecret:
       name: telemetry-fabric-operator-token
       key: token
+  tls:
+    enabled: true
+    secretName: telemetry-fabric-control-plane-tls
+    requireClientAuth: false
   persistence:
     enabled: false
     size: 10Gi
@@ -102,82 +113,6 @@ serviceMonitor:
   interval: 30s
   labels:
     release: prometheus
-
-crawler:
-  enabled: true
-  image:
-    repository: registry.example.com/telemetry-fabric/chain-crawler-go
-    tag: "0.1.0"
-    pullPolicy: IfNotPresent
-  replicas: 3
-  env:
-    - name: TELEMETRY_FABRIC_KAFKA_BROKERS
-      value: redpanda.kafka.svc.cluster.local:9092
-    - name: TELEMETRY_FABRIC_CLICKHOUSE_DSN
-      valueFrom:
-        secretKeyRef:
-          name: telemetry-fabric-clickhouse
-          key: dsn
-  hpa:
-    enabled: true
-    minReplicas: 3
-    maxReplicas: 12
-    targetCPUUtilizationPercentage: 70
-    targetMemoryUtilizationPercentage: 80
-  podDisruptionBudget:
-    enabled: true
-    minAvailable: 2
-  affinity:
-    podAntiAffinity:
-      preferredDuringSchedulingIgnoredDuringExecution:
-        - weight: 100
-          podAffinityTerm:
-            labelSelector:
-              matchLabels:
-                app.kubernetes.io/name: telemetry-fabric-chain-crawler
-            topologyKey: kubernetes.io/hostname
-  resources:
-    requests:
-      cpu: 500m
-      memory: 512Mi
-    limits:
-      cpu: "2"
-      memory: 2Gi
-
-streamProcessor:
-  enabled: true
-  image:
-    repository: registry.example.com/telemetry-fabric/stream-processor
-    tag: "0.1.0"
-    pullPolicy: IfNotPresent
-  replicas: 3
-  env:
-    - name: TELEMETRY_FABRIC_KAFKA_BROKERS
-      value: redpanda.kafka.svc.cluster.local:9092
-  hpa:
-    enabled: true
-    minReplicas: 3
-    maxReplicas: 12
-    targetCPUUtilizationPercentage: 70
-    targetMemoryUtilizationPercentage: 80
-  podDisruptionBudget:
-    enabled: true
-    minAvailable: 2
-  resources:
-    requests:
-      cpu: 500m
-      memory: 512Mi
-    limits:
-      cpu: "2"
-      memory: 2Gi
-
-# For production, prefer managed Kafka/Redpanda, ClickHouse Cloud, or their
-# operators. Enable these only for small clusters or controlled environments.
-storage:
-  redpanda:
-    enabled: false
-  clickhouse:
-    enabled: false
 
 resources:
   requests:
